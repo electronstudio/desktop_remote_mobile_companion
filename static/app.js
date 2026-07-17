@@ -99,7 +99,7 @@ function startPeerConnection(myId) {
   };
   pc = new RTCPeerConnection(config);
 
-  channel = pc.createDataChannel('touch', { ordered: false, maxRetransmits: 0 });
+  channel = pc.createDataChannel('touch', { ordered: true });
 
   channel.onopen = () => {
     if (myId !== currentId) return;
@@ -148,29 +148,70 @@ function startPeerConnection(myId) {
   };
 }
 
-function sendEvent(type, touchList) {
+function sendPointerSample(type, e) {
   if (!channel || channel.readyState !== 'open') return;
 
   const rect = trackpad.getBoundingClientRect();
-  const touches = [];
-  for (let i = 0; i < touchList.length; i++) {
-    const t = touchList[i];
-    touches.push({
-      id: t.identifier,
-      x: (t.clientX - rect.left) / rect.width,
-      y: (t.clientY - rect.top) / rect.height
-    });
-  }
-  const payload = { type, t: touches };
+  const payload = {
+    type,
+    t: [{
+      id: e.pointerId,
+      x: (e.clientX - rect.left) / rect.width,
+      y: (e.clientY - rect.top) / rect.height
+    }]
+  };
   channel.send(JSON.stringify(payload));
-  console.log('sent', payload);
 }
 
-['touchstart', 'touchmove', 'touchend', 'touchcancel'].forEach((eventName) => {
-  trackpad.addEventListener(eventName, (e) => {
-    e.preventDefault();
-    sendEvent(eventName, e.changedTouches);
-  }, { passive: false });
+function releasePointer(e) {
+  if (trackpad.hasPointerCapture && trackpad.hasPointerCapture(e.pointerId)) {
+    trackpad.releasePointerCapture(e.pointerId);
+  }
+}
+
+trackpad.addEventListener('pointerdown', (e) => {
+  e.preventDefault();
+  if (trackpad.setPointerCapture) {
+    trackpad.setPointerCapture(e.pointerId);
+  }
+  sendPointerSample('pointerdown', e);
+}, { passive: false });
+
+trackpad.addEventListener('pointermove', (e) => {
+  e.preventDefault();
+  // Use coalesced events only to get the latest sub-frame sample, but send
+  // one message per pointermove frame. This avoids flooding the data channel
+  // and keeps pointer motion consistent.
+  const events = e.getCoalescedEvents ? e.getCoalescedEvents() : [];
+  const last = events.length > 0 ? events[events.length - 1] : e;
+  sendPointerSample('pointermove', last);
+}, { passive: false });
+
+trackpad.addEventListener('pointerup', (e) => {
+  e.preventDefault();
+  releasePointer(e);
+  sendPointerSample('pointerup', e);
 });
+
+trackpad.addEventListener('pointercancel', (e) => {
+  e.preventDefault();
+  releasePointer(e);
+  log('pointercancel', 'err');
+  sendPointerSample('pointercancel', e);
+});
+
+trackpad.addEventListener('contextmenu', (e) => {
+  e.preventDefault();
+});
+
+// Prevent the browser's default touch gestures (long-press menu, text
+// selection, vibration, etc.) from cancelling our pointer stream.
+trackpad.addEventListener('touchstart', (e) => {
+  e.preventDefault();
+}, { passive: false });
+
+trackpad.addEventListener('touchmove', (e) => {
+  e.preventDefault();
+}, { passive: false });
 
 connect();

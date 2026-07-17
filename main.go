@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/alexflint/go-arg"
+	"github.com/electronstudio/desktop_remote_mobile_companion/trackpad"
 	"github.com/gorilla/websocket"
 	"github.com/pion/webrtc/v4"
 )
@@ -71,12 +72,20 @@ func main() {
 		log.Fatalf("certificate setup failed: %v", err)
 	}
 
+	pad, err := trackpad.New()
+	if err != nil {
+		log.Fatalf("virtual trackpad setup failed: %v", err)
+	}
+	defer pad.Close()
+
 	staticSub, err := fs.Sub(staticFS, "static")
 	if err != nil {
 		log.Fatalf("static filesystem failed: %v", err)
 	}
 	http.Handle("/", http.FileServer(http.FS(staticSub)))
-	http.HandleFunc("/signal", signalHandler)
+	http.HandleFunc("/signal", func(w http.ResponseWriter, r *http.Request) {
+		signalHandler(w, r, pad)
+	})
 
 	log.Printf("HTTPS listening on https://localhost%s", listenAddr)
 	log.Printf(" certificate stored in %s", certDir)
@@ -94,7 +103,7 @@ func main() {
 	log.Fatal(server.ListenAndServeTLS("", ""))
 }
 
-func signalHandler(w http.ResponseWriter, r *http.Request) {
+func signalHandler(w http.ResponseWriter, r *http.Request, pad *trackpad.Device) {
 	ws, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Printf("websocket upgrade failed: %v", err)
@@ -128,6 +137,15 @@ func signalHandler(w http.ResponseWriter, r *http.Request) {
 		log.Printf("data channel received from %s", r.RemoteAddr)
 		dc.OnMessage(func(msg webrtc.DataChannelMessage) {
 			fmt.Printf("%s\n", string(msg.Data))
+
+			var ev trackpad.Event
+			if err := json.Unmarshal(msg.Data, &ev); err != nil {
+				log.Printf("bad touch event from %s: %v", r.RemoteAddr, err)
+				return
+			}
+			if err := pad.ProcessEvent(ev); err != nil {
+				log.Printf("trackpad event error from %s: %v", r.RemoteAddr, err)
+			}
 		})
 	})
 

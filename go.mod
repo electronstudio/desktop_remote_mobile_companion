@@ -5,6 +5,7 @@ go 1.24.4
 require (
 	github.com/alexflint/go-arg v1.6.1
 	github.com/gorilla/websocket v1.5.3
+	github.com/jbdemonte/virtual-device v1.2.1
 	github.com/pion/webrtc/v4 v4.2.16
 )
 

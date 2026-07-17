@@ -15,6 +15,9 @@
       background: #111;
       color: #eee;
       font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      user-select: none;
+      -webkit-user-select: none;
+      -webkit-touch-callout: none;
     }
     #trackpad {
       height: 50vh;
@@ -26,11 +29,17 @@
       align-items: center;
       justify-content: center;
       user-select: none;
+      -webkit-user-select: none;
+      -webkit-touch-callout: none;
+      -webkit-user-drag: none;
+      -webkit-tap-highlight-color: transparent;
     }
     #trackpad-label {
       color: #666;
       font-size: 1.2rem;
       pointer-events: none;
+      user-select: none;
+      -webkit-user-select: none;
     }
     #status {
       height: 50vh;
