@@ -20,10 +20,13 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/alexflint/go-arg"
+	"github.com/electronstudio/desktop_remote_mobile_companion/input"
+	"github.com/electronstudio/desktop_remote_mobile_companion/tablet"
 	"github.com/electronstudio/desktop_remote_mobile_companion/trackpad"
 	"github.com/gorilla/websocket"
 	"github.com/pion/webrtc/v4"
@@ -31,6 +34,21 @@ import (
 
 //go:embed static/*
 var staticFS embed.FS
+
+//go:embed VERSION
+var version string
+
+const uinputInstructions = `uinput access denied. To fix permissions, run:
+
+  echo 'KERNEL=="uinput", MODE="0660", GROUP="input"' | sudo tee /etc/udev/rules.d/99-uinput.rules
+  sudo udevadm control --reload
+  sudo udevadm trigger
+
+Then make sure your user is in the 'input' group:
+
+  sudo usermod -aG input $USER
+
+Log out and log back in for the group change to take effect.`
 
 const (
 	listenAddr = ":8081"
@@ -59,6 +77,9 @@ type signalMsg struct {
 func main() {
 	arg.MustParse(&cli)
 	listenAddr := fmt.Sprintf(":%d", cli.Port)
+	versionStr := strings.TrimSpace(version)
+
+	log.Printf("Desktop Remote Mobile Companion v%s", versionStr)
 
 	certDir, err := certDirectory()
 	if err != nil {
@@ -74,17 +95,39 @@ func main() {
 
 	pad, err := trackpad.New()
 	if err != nil {
-		log.Fatalf("virtual trackpad setup failed: %v", err)
+		log.Fatalf("failed to register virtual trackpad: %v\n\n%s", err, uinputInstructions)
 	}
 	defer pad.Close()
+
+	tabletDev, err := tablet.New()
+	if err != nil {
+		log.Fatalf("failed to register virtual graphics tablet: %v\n\n%s", err, uinputInstructions)
+	}
+	defer tabletDev.Close()
 
 	staticSub, err := fs.Sub(staticFS, "static")
 	if err != nil {
 		log.Fatalf("static filesystem failed: %v", err)
 	}
-	http.Handle("/", http.FileServer(http.FS(staticSub)))
+
+	indexBytes, err := staticFS.ReadFile("static/index.html")
+	if err != nil {
+		log.Fatalf("failed to read embedded index.html: %v", err)
+	}
+	indexHTML := strings.ReplaceAll(string(indexBytes), "{{VERSION}}", versionStr)
+	fileServer := http.FileServer(http.FS(staticSub))
+
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/" || r.URL.Path == "/index.html" {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+			w.Write([]byte(indexHTML))
+			return
+		}
+		fileServer.ServeHTTP(w, r)
+	})
 	http.HandleFunc("/signal", func(w http.ResponseWriter, r *http.Request) {
-		signalHandler(w, r, pad)
+		signalHandler(w, r, pad, tabletDev)
 	})
 
 	log.Printf("HTTPS listening on https://localhost%s", listenAddr)
@@ -103,7 +146,7 @@ func main() {
 	log.Fatal(server.ListenAndServeTLS("", ""))
 }
 
-func signalHandler(w http.ResponseWriter, r *http.Request, pad *trackpad.Device) {
+func signalHandler(w http.ResponseWriter, r *http.Request, pad *trackpad.Device, tabletDev *tablet.Device) {
 	ws, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Printf("websocket upgrade failed: %v", err)
@@ -138,13 +181,22 @@ func signalHandler(w http.ResponseWriter, r *http.Request, pad *trackpad.Device)
 		dc.OnMessage(func(msg webrtc.DataChannelMessage) {
 			fmt.Printf("%s\n", string(msg.Data))
 
-			var ev trackpad.Event
+			var ev input.Event
 			if err := json.Unmarshal(msg.Data, &ev); err != nil {
 				log.Printf("bad touch event from %s: %v", r.RemoteAddr, err)
 				return
 			}
-			if err := pad.ProcessEvent(ev); err != nil {
-				log.Printf("trackpad event error from %s: %v", r.RemoteAddr, err)
+			switch ev.Device {
+			case "tablet":
+				if err := tabletDev.ProcessEvent(ev); err != nil {
+					log.Printf("tablet event error from %s: %v", r.RemoteAddr, err)
+				}
+			case "trackpad":
+				if err := pad.ProcessEvent(ev); err != nil {
+					log.Printf("trackpad event error from %s: %v", r.RemoteAddr, err)
+				}
+			default:
+				log.Printf("unknown device %q from %s", ev.Device, r.RemoteAddr)
 			}
 		})
 	})

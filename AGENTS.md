@@ -2,6 +2,10 @@
 
 This file contains the context coding agents need to work on this project.
 
+# Version numbers
+
+Always increment the minor version number sored in VERISON file before doing a build, e.g. VERSION 0.3.7 becomes 0.3.8.
+
 ## Project overview
 
 This project turns a mobile device into a multitouch trackpad/remote input device for a Linux desktop PC. The Go program:
@@ -10,7 +14,8 @@ This project turns a mobile device into a multitouch trackpad/remote input devic
 2. Provides WebSocket-based WebRTC signaling.
 3. Receives pointer events from the phone over a WebRTC data channel.
 4. Prints the events to the terminal as raw JSON.
-5. Emits the events as a Linux virtual multitouch trackpad via `uinput`.
+5. Emits the events as either a Linux virtual multitouch trackpad or an absolute graphics tablet via `uinput`.
+6. Displays the embedded version number in both the server log and the web client.
 
 ## Module
 
@@ -29,10 +34,13 @@ github.com/electronstudio/desktop_remote_mobile_companion
                              +-----------------+
 ```
 
-- `main.go` — HTTPS server, self-signed certificate generation, WebSocket signaling handler, WebRTC peer connection, data-channel receiver.
+- `main.go` — HTTPS server, self-signed certificate generation, WebSocket signaling handler, WebRTC peer connection, data-channel receiver, device routing, version injection.
+- `input/event.go` — shared `Touch`/`Event` types and coordinate helpers used by both devices.
 - `trackpad/trackpad.go` — virtual Linux multitouch trackpad (Stage 2).
-- `static/index.html` — responsive trackpad UI.
-- `static/app.js` — browser WebRTC client and touch-event capture.
+- `tablet/tablet.go` — virtual Linux absolute graphics tablet.
+- `static/index.html` — responsive touch UI with mode selector and version display.
+- `static/app.js` — browser WebRTC client, touch-event capture, and mode switching.
+- `VERSION` — embedded version string, displayed by both server and client.
 
 ## Build and run
 
@@ -95,6 +103,23 @@ sudo udevadm trigger
 
 Make sure your user is in the `input` group (`usermod -aG input $USER`).
 
+## Tablet hwdb setup
+
+The virtual graphics tablet uses `uinput`, which cannot set axis resolution *before* the kernel creates the device. libinput probes the device at creation time and rejects tablets with zero resolution ("missing tablet capabilities: resolution"). A udev hwdb entry fixes this by setting the resolution at device-creation time:
+
+```bash
+sudo tee /etc/udev/hwdb.d/60-desktop-remote-mobile-companion.hwdb > /dev/null << 'EOF'
+# Desktop Remote Mobile Companion Tablet (virtual uinput device)
+evdev:input:b0006v1234p5679*
+ EVDEV_ABS_00=::200
+ EVDEV_ABS_01=::200
+EOF
+
+sudo systemd-hwdb update 2>/dev/null || sudo udevadm hwdb --update
+```
+
+This matches our virtual device (bus `0x0006` = `BUS_VIRTUAL`, vendor `0x1234`, product `0x5679`) and sets `ABS_X`/`ABS_Y` resolution to 200 units/mm. Without this, libinput ignores the tablet and the cursor will not move.
+
 ## WebRTC signaling flow
 
 1. Browser opens `wss://<host>/signal`.
@@ -111,6 +136,7 @@ The browser uses `PointerEvent` (instead of `TouchEvent`) because `pointermove` 
 
 ```json
 {
+  "device": "trackpad",
   "type": "pointermove",
   "t": [
     {"id": 1, "x": 0.37, "y": 0.51}
@@ -118,8 +144,10 @@ The browser uses `PointerEvent` (instead of `TouchEvent`) because `pointermove` 
 }
 ```
 
-- `type`: one of `pointerdown`, `pointermove`, `pointerup`, `pointercancel`. The server maps these to the same lifecycle as touch events.
-- `t`: array containing a single pointer sample.
+- `device`: one of `trackpad` or `tablet`. The server routes the event to the corresponding virtual input device. A client may send events for both devices, even interleaved.
+- `type`: one of `pointerdown`, `pointermove`, `pointerup`, `pointercancel`, `buttondown`, `buttonup`. The server maps pointer events to the same lifecycle as touch events. Button events are routed to the tablet device only.
+- `button`: required for `buttondown`/`buttonup`; one of `left`, `middle`, `right`.
+- `t`: array containing a single pointer sample (omitted for button events).
 - `id`: pointer identifier (`PointerEvent.pointerId`).
 - `x`, `y`: normalized to `[0,1]` relative to the top-half trackpad element.
 
@@ -133,6 +161,7 @@ The server prints the raw JSON line to stdout using `fmt.Printf`.
 - **Axis range/resolution**: the virtual touchpad advertises `ABS_X`/`ABS_Y`/`ABS_MT_POSITION_*` with a range of `0..8191` and resolution `80 units/mm`. This matches a roughly 102 mm real trackpad. Larger ranges such as `0..32767` / `320 units/mm` made the cursor too slow and caused libinput's acceleration curve to behave inconsistently.
 - **Single-touch axes during multitouch**: `ABS_X`/`ABS_Y`/`ABS_PRESSURE` are only emitted when exactly one contact is active. With two or more contacts the device emits only MT events, which lets libinput classify two-finger scroll and pinch gestures correctly.
 - **Clickpad button model**: the device only advertises `BTN_LEFT` plus the `INPUT_PROP_BUTTONPAD` property. Real clickpads do not advertise a physical `BTN_RIGHT`; that should be software-emulated.
+- **Graphics tablet mode**: the tablet device mimics a real pen tablet (e.g. Wacom Intuos, Surface Pen). It uses `BUS_VIRTUAL`, `BTN_TOOL_PEN` for proximity, `ABS_X`/`ABS_Y` (0..32767, 200 units/mm), `ABS_PRESSURE`, `ABS_DISTANCE`, and `ABS_MISC` for tool tracking via `MSC_SERIAL`. Touch acts as the pen hovering (cursor follows, no click). The client's L/M/R buttons map to `BTN_TOUCH` (tip = left click), `BTN_STYLUS` (right click), and `BTN_STYLUS2` (middle click). **A udev hwdb entry is required** — see "Tablet hwdb setup" below.
 
 ## Dependencies
 
@@ -159,12 +188,14 @@ Manual test flow:
 1. `go run .`
 2. Open the printed LAN URL in a phone browser.
 3. Accept the self-signed certificate.
-4. Verify the status area shows “Data channel open”.
+4. Verify the status area shows “Data channel open” and the version number.
 5. Touch the top half of the screen and confirm JSON lines appear in the desktop terminal.
-6. Verify the virtual device is registered:
-   - `ls /dev/input/by-id/` or `evtest` should show a device named “Desktop Remote Mobile Companion Touchpad”.
-   - Run `evtest /dev/input/event<N>` (with the device path), touch the phone, and confirm `EV_ABS / ABS_MT_POSITION_X`, `ABS_MT_POSITION_Y`, and `ABS_MT_SLOT` events are emitted.
-   - Alternatively, `libinput debug-events` shows pointer and multitouch gestures.
+6. Verify the virtual devices are registered:
+   - `ls /dev/input/by-id/` or `evtest` should show devices named “Desktop Remote Mobile Companion Touchpad” and “Desktop Remote Mobile Companion Tablet”.
+   - For the trackpad, run `evtest /dev/input/event<N>` and confirm `EV_ABS / ABS_MT_POSITION_X`, `ABS_MT_POSITION_Y`, and `ABS_MT_SLOT` events are emitted for multitouch contacts.
+   - For the tablet, run `evtest` and confirm `EV_ABS / ABS_X` and `ABS_Y` events are emitted as an absolute single-point contact.
+   - Alternatively, `libinput debug-events` shows pointer, multitouch, and tablet-tool events.
+7. Switch the mode selector to “Tablet”, touch the phone, and confirm the cursor follows your finger as an absolute position. Press the L/M/R buttons and confirm `BTN_TOUCH`/`BTN_STYLUS`/`BTN_STYLUS2` events are emitted without moving the pointer.
 
 Automated headless Chromium checks are possible with `--ignore-certificate-errors` and `--virtual-time-budget`, but WebRTC connection setup timing is flaky in headless mode; prefer manual device testing.
 

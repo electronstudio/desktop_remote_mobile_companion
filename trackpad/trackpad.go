@@ -7,6 +7,7 @@ import (
 	"sort"
 	"sync"
 
+	"github.com/electronstudio/desktop_remote_mobile_companion/input"
 	virtual_device "github.com/jbdemonte/virtual-device"
 	"github.com/jbdemonte/virtual-device/linux"
 	"github.com/jbdemonte/virtual-device/touchpad"
@@ -17,19 +18,6 @@ const (
 	axisMax    = 8191
 	resolution = 80 // ~102mm physical touchpad size, realistic units/mm
 )
-
-// Touch is a single changed touch from the browser.
-type Touch struct {
-	ID int     `json:"id"`
-	X  float64 `json:"x"`
-	Y  float64 `json:"y"`
-}
-
-// Event is the JSON payload sent over the WebRTC data channel.
-type Event struct {
-	Type string  `json:"type"`
-	T    []Touch `json:"t"`
-}
 
 // Device is a virtual multitouch trackpad.
 type Device struct {
@@ -97,7 +85,7 @@ func (d *Device) Close() error {
 }
 
 // ProcessEvent applies a browser touch event to the virtual trackpad.
-func (d *Device) ProcessEvent(ev Event) error {
+func (d *Device) ProcessEvent(ev input.Event) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
@@ -112,6 +100,9 @@ func (d *Device) ProcessEvent(ev Event) error {
 		action = "move"
 	case "touchend", "touchcancel", "pointerup", "pointercancel":
 		action = "up"
+	case "buttondown", "buttonup":
+		// Button events are handled by the tablet device.
+		return nil
 	default:
 		return fmt.Errorf("unknown touch/pointer event type: %q", ev.Type)
 	}
@@ -127,8 +118,8 @@ func (d *Device) ProcessEvent(ev Event) error {
 					return err
 				}
 			}
-			slot.X = norm(t.X)
-			slot.Y = norm(t.Y)
+			slot.X = input.Norm(t.X)
+			slot.Y = input.Norm(t.Y)
 			if action == "down" || slot.Pressure == 0 {
 				slot.Pressure = 1
 			}
@@ -170,9 +161,9 @@ func (d *Device) ProcessEvent(ev Event) error {
 		}
 		if len(pressed) == 1 {
 			primary := pressed[0]
-			d.tp.Send(uint16(linux.EV_ABS), uint16(linux.ABS_X), denormBi(primary.X, 0, axisMax))
-			d.tp.Send(uint16(linux.EV_ABS), uint16(linux.ABS_Y), denormBi(primary.Y, 0, axisMax))
-			d.tp.Send(uint16(linux.EV_ABS), uint16(linux.ABS_PRESSURE), denormUni(primary.Pressure, 0, 255))
+			d.tp.Send(uint16(linux.EV_ABS), uint16(linux.ABS_X), input.DenormBi(primary.X, 0, axisMax))
+			d.tp.Send(uint16(linux.EV_ABS), uint16(linux.ABS_Y), input.DenormBi(primary.Y, 0, axisMax))
+			d.tp.Send(uint16(linux.EV_ABS), uint16(linux.ABS_PRESSURE), input.DenormUni(primary.Pressure, 0, 255))
 		}
 	} else {
 		if d.touching {
@@ -209,37 +200,4 @@ func (d *Device) releaseSlot(slot int) {
 		d.slots[slot] = false
 		d.slotID[slot] = -1
 	}
-}
-
-// norm maps a browser [0,1] coordinate to the library's [-1,1] range.
-func norm(v float64) float32 {
-	if v < 0 {
-		v = 0
-	}
-	if v > 1 {
-		v = 1
-	}
-	return float32(2*v - 1)
-}
-
-// denormBi converts a [-1,1] value to an absolute axis range [min,max].
-func denormBi(v float32, min, max int32) int32 {
-	if v < -1 {
-		v = -1
-	}
-	if v > 1 {
-		v = 1
-	}
-	return min + int32((v+1)*0.5*float32(max-min))
-}
-
-// denormUni converts a [0,1] value to an absolute axis range [min,max].
-func denormUni(v float32, min, max int32) int32 {
-	if v < 0 {
-		v = 0
-	}
-	if v > 1 {
-		v = 1
-	}
-	return min + int32(v*float32(max-min))
 }
