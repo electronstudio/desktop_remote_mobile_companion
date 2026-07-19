@@ -29,6 +29,7 @@ import (
 	"github.com/electronstudio/desktop_remote_mobile_companion/tablet"
 	"github.com/electronstudio/desktop_remote_mobile_companion/trackpad"
 	"github.com/gorilla/websocket"
+	"github.com/mdp/qrterminal/v3"
 	"github.com/pion/webrtc/v4"
 )
 
@@ -121,8 +122,12 @@ func main() {
 	log.Printf("HTTPS listening on https://localhost%s", listenAddr)
 	log.Printf(" certificate stored in %s", certDir)
 	log.Printf(" certificate SHA-256 fingerprint: %s", fingerprint)
+
 	for _, ip := range localIPs() {
-		log.Printf(" also reachable at https://%s%s", ip, listenAddr)
+		s := fmt.Sprintf("https://%s:%d", ip, cli.Port)
+		log.Printf(" also reachable at %s", s)
+
+		qrterminal.GenerateHalfBlock(s, qrterminal.L, os.Stdout)
 	}
 
 	server := &http.Server{
@@ -377,7 +382,14 @@ func localIPs() []string {
 		}
 		for _, addr := range addrs {
 			if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
-				out = append(out, ipnet.IP.String())
+				s := ipnet.IP.String()
+				if ipnet.IP.To4() == nil {
+					if !strings.HasPrefix(s, "fe80") {
+						out = append(out, "["+s+"]")
+					}
+				} else {
+					out = append(out, s)
+				}
 			}
 		}
 	}
