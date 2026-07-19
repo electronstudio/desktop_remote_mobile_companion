@@ -1,3 +1,5 @@
+//go:build linux
+
 // Package tablet creates a virtual Linux graphics tablet via uinput and maps
 // browser touch events to absolute screen coordinates.
 //

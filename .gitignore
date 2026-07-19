@@ -1,4 +1,5 @@
 desktop_remote_mobile_companion
+*.exe
 server.crt
 server.key
 .idea

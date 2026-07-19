@@ -1,0 +1,149 @@
+name: Build
+
+on:
+  push:
+  pull_request:
+
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+
+jobs:
+  get-version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.get-version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: get-version
+        run: |
+          version=$(cat VERSION)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  build-linux:
+    needs: get-version
+    runs-on: ubuntu-22.04
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "^1.26"
+
+      - name: Build
+        run: go build
+
+      - name: Stage artifact
+        run: |
+          name="desktop_remote_mobile_companion-linux-x86_64-${{ needs.get-version.outputs.version }}"
+          mkdir -p "dist/$name"
+          cp desktop_remote_mobile_companion "dist/$name/"
+          cp README.md LICENSE "dist/$name/"
+
+      - name: Upload
+        uses: actions/upload-artifact@v7
+        with:
+          name: desktop_remote_mobile_companion-linux-x86_64-${{ needs.get-version.outputs.version }}
+          path: dist/desktop_remote_mobile_companion-linux-x86_64-${{ needs.get-version.outputs.version }}
+
+
+  build-windows:
+    needs: get-version
+    runs-on: windows-2022
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "^1.26"
+
+      - name: Build
+        shell: bash
+        run: |
+          go build
+
+      - name: Stage artifact
+        shell: bash
+        run: |
+          name="desktop_remote_mobile_companion-windows-x86_64-${{ needs.get-version.outputs.version }}"
+          mkdir -p "dist/$name"
+          cp desktop_remote_mobile_companion.exe "dist/$name/"/
+          cp README.md LICENSE "dist/$name/"
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v7
+        with:
+          name: desktop_remote_mobile_companion-windows-x86_64-${{ needs.get-version.outputs.version }}
+          path: dist/desktop_remote_mobile_companion-windows-x86_64-${{ needs.get-version.outputs.version }}
+
+#  build-flatpak:
+#    needs: get-version
+#    runs-on: ubuntu-24.04
+#
+#    steps:
+#      - uses: actions/checkout@v7
+#
+#      - name: Install flatpak
+#        run: |
+#          sudo apt-get update -qq
+#          sudo apt-get install -y flatpak flatpak-builder appstream
+#          flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+#          flatpak install --user -y flathub \
+#            org.freedesktop.Platform//25.08 \
+#            org.freedesktop.Sdk//25.08 \
+#            org.freedesktop.Sdk.Extension.golang//25.08
+#
+#      - name: Build flatpak
+#        run: |
+#          flatpak-builder --user --repo repo --force-clean build-dir flatpak/uk.co.electronstudio.desktop_remote_mobile_companion.yaml
+#          flatpak build-bundle repo low_latency_dictation.flatpak uk.co.electronstudio.desktop_remote_mobile_companion
+#
+#      - name: Stage artifact
+#        run: |
+#          name="desktop_remote_mobile_companion-flatpak-x86_64-${{ needs.get-version.outputs.version }}"
+#          mkdir -p "dist/$name"
+#          cp low_latency_dictation.flatpak "dist/$name/"
+#          cp README.md LICENSE "dist/$name/"
+#
+#      - name: Upload bundle
+#        uses: actions/upload-artifact@v7
+#        with:
+#          name: desktop_remote_mobile_companion-flatpak-x86_64-${{ needs.get-version.outputs.version }}
+#          path: dist/desktop_remote_mobile_companion-flatpak-x86_64-${{ needs.get-version.outputs.version }}
+
+  combine:
+    needs: [get-version, build-linux, build-windows]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: desktop_remote_mobile_companion-*-${{ needs.get-version.outputs.version }}
+
+      - name: Build combined archives
+        run: |
+          version="${{ needs.get-version.outputs.version }}"
+          outdir="dist/desktop_remote_mobile_companion-all-$version"
+          mkdir -p "$outdir"
+          for dir in artifacts/desktop_remote_mobile_companion-*; do
+            name=$(basename "$dir")
+            if [[ "$name" == desktop_remote_mobile_companion-linux-* ]]; then
+              chmod +x "artifacts/$name/desktop_remote_mobile_companion"
+              (cd artifacts && tar -cJf "../$outdir/$name.tar.xz" "$name")
+            else
+              (cd artifacts && zip -r "../$outdir/$name.zip" "$name")
+            fi
+          done
+
+      - name: Upload combined artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: desktop_remote_mobile_companion-all-${{ needs.get-version.outputs.version }}
+          path: dist/desktop_remote_mobile_companion-all-${{ needs.get-version.outputs.version }}

@@ -1,3 +1,5 @@
+//go:build linux
+
 // Package trackpad creates a virtual Linux multitouch trackpad via uinput
 // and maps browser touch events to kernel input events.
 package trackpad
