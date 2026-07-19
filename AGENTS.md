@@ -103,9 +103,15 @@ sudo udevadm trigger
 
 Make sure your user is in the `input` group (`usermod -aG input $USER`).
 
-## Tablet hwdb setup
+## Tablet axis resolution
 
-The virtual graphics tablet uses `uinput`, which cannot set axis resolution *before* the kernel creates the device. libinput probes the device at creation time and rejects tablets with zero resolution ("missing tablet capabilities: resolution"). A udev hwdb entry fixes this by setting the resolution at device-creation time:
+The virtual graphics tablet advertises `ABS_X`/`ABS_Y` resolution of 200 units/mm. libinput rejects tablets with zero resolution ("missing tablet capabilities: resolution") and ignores the device for the whole session, so the resolution must be visible to libinput at probe time.
+
+The device sets the full absinfo (including resolution) **before** `UI_DEV_CREATE` using the `UI_ABS_SETUP` ioctl (Linux 4.16+) via our local fork of `github.com/jbdemonte/virtual-device` in `third_party/virtual-device/`. The device is therefore born with the correct resolution and libinput sees it on the first probe — no udev hwdb entry is required.
+
+### Optional legacy hwdb entry (pre-4.16 kernels only)
+
+On kernels older than 4.16, `UI_ABS_SETUP` is unavailable and the resolution must be set at device-creation time via a udev hwdb entry instead:
 
 ```bash
 sudo tee /etc/udev/hwdb.d/60-desktop-remote-mobile-companion.hwdb > /dev/null << 'EOF'
@@ -118,7 +124,7 @@ EOF
 sudo systemd-hwdb update 2>/dev/null || sudo udevadm hwdb --update
 ```
 
-This matches our virtual device (bus `0x0006` = `BUS_VIRTUAL`, vendor `0x1234`, product `0x5679`) and sets `ABS_X`/`ABS_Y` resolution to 200 units/mm. Without this, libinput ignores the tablet and the cursor will not move.
+This matches our virtual device (bus `0x0006` = `BUS_VIRTUAL`, vendor `0x1234`, product `0x5679`) and sets `ABS_X`/`ABS_Y` resolution to 200 units/mm. On modern kernels (4.16+) this entry is redundant because `UI_ABS_SETUP` already sets the resolution at creation time.
 
 ## WebRTC signaling flow
 
@@ -161,7 +167,7 @@ The server prints the raw JSON line to stdout using `fmt.Printf`.
 - **Axis range/resolution**: the virtual touchpad advertises `ABS_X`/`ABS_Y`/`ABS_MT_POSITION_*` with a range of `0..8191` and resolution `80 units/mm`. This matches a roughly 102 mm real trackpad. Larger ranges such as `0..32767` / `320 units/mm` made the cursor too slow and caused libinput's acceleration curve to behave inconsistently.
 - **Single-touch axes during multitouch**: `ABS_X`/`ABS_Y`/`ABS_PRESSURE` are only emitted when exactly one contact is active. With two or more contacts the device emits only MT events, which lets libinput classify two-finger scroll and pinch gestures correctly.
 - **Clickpad button model**: the device only advertises `BTN_LEFT` plus the `INPUT_PROP_BUTTONPAD` property. Real clickpads do not advertise a physical `BTN_RIGHT`; that should be software-emulated.
-- **Graphics tablet mode**: the tablet device mimics a real pen tablet (e.g. Wacom Intuos, Surface Pen). It uses `BUS_VIRTUAL`, `BTN_TOOL_PEN` for proximity, `ABS_X`/`ABS_Y` (0..32767, 200 units/mm), `ABS_PRESSURE`, `ABS_DISTANCE`, and `ABS_MISC` for tool tracking via `MSC_SERIAL`. Touch acts as the pen hovering (cursor follows, no click). The client's L/M/R buttons map to `BTN_TOUCH` (tip = left click), `BTN_STYLUS` (right click), and `BTN_STYLUS2` (middle click). **A udev hwdb entry is required** — see "Tablet hwdb setup" below.
+- **Graphics tablet mode**: the tablet device mimics a real pen tablet (e.g. Wacom Intuos, Surface Pen). It uses `BUS_VIRTUAL`, `BTN_TOOL_PEN` for proximity, `ABS_X`/`ABS_Y` (0..32767, 200 units/mm), `ABS_PRESSURE`, `ABS_DISTANCE`, and `ABS_MISC` for tool tracking via `MSC_SERIAL`. Touch acts as the pen hovering (cursor follows, no click). The client's L/M/R buttons map to `BTN_TOUCH` (tip = left click), `BTN_STYLUS` (right click), and `BTN_STYLUS2` (middle click). The axis resolution is set at device-creation time via `UI_ABS_SETUP` (Linux 4.16+) — see "Tablet axis resolution" below.
 
 ## Dependencies
 

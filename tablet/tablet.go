@@ -6,9 +6,10 @@
 // clicking), and the client's L/M/R buttons act as the pen tip and barrel
 // buttons which the desktop maps to left / right / middle clicks.
 //
-// A udev hwdb entry must be installed so libinput sees the axis resolution
-// at device-creation time (uinput cannot set resolution before the device
-// is created, causing a race with libinput). See AGENTS.md.
+// The axis resolution is set before the device is created using the
+// UI_ABS_SETUP ioctl (Linux 4.16+) via our local fork of
+// github.com/jbdemonte/virtual-device in third_party/virtual-device/, so
+// libinput sees the resolution on its first probe. See AGENTS.md.
 package tablet
 
 import (
@@ -22,7 +23,7 @@ import (
 
 const (
 	axisMax    = 32767
-	resolution = 200  // units/mm — must match the hwdb entry
+	resolution = 200  // units/mm — set via UI_ABS_SETUP at device creation
 	toolSerial = 1    // MSC_SERIAL tool serial for tracking
 	pressure   = 2048 // pressure used for tip (left click)
 	hoverDist  = 10   // ABS_DISTANCE while hovering (keeps tool in proximity)
