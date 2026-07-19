@@ -1,32 +1,50 @@
 # Desktop Remote Mobile Companion
 
-A tiny Go server that turns a phone/tablet into a multitouch trackpad for a Linux desktop. 
-ouch events on the phone's screen are sent over a WebRTC data channel (UDP-based, low latency)
-to the desktop.
+Connect your mobile device wirelessly to your PC and use it as:
 
-## Build / run
+* Trackpad (DONE)
+* Graphics tablet (IN PROGRESS)
+* Display (TO DO)
+* Camera (TO DO)
+* Microphone (TO DO)
+* Keyboard (TO DO)
+* Clipboard (TO DO)
+
+Designed for Linux Wayland.  Linux X11 may work.  Windows TODO.
+
+## Build
 
 ```bash
-go run .
+go build
 ```
 
-Use a different port:
+## Install
+
+From releases.
+
+Needs uinput group permissions.  Enter this command then reboot:
+
+    sudo usermod -aG uinput $USER
+
+## Run
 
 ```bash
-go run . --port 8443
+./desktop_remote_movile_companion --port 8080
 ```
 
-The first time it runs, a self-signed certificate is created in your user cache directory (`$HOME/.cache/desktop_remote_mobile_companion` on Linux). The server prints its SHA-256 fingerprint and the LAN URLs you can open on your phone.
+The first time it runs, a self-signed certificate is created in your user cache
+directory (`$HOME/.cache/desktop_remote_mobile_companion` on Linux).
 
-## Usage
+It will print a URL and also a QR code for that URL, e.g. `https://192.168.1.150:8080`. 
+  Open this URL on your mobile device.  You will need to accept the self-signed certificate.
 
-1. On the desktop run `go run .`.
-2. On your phone (same Wi-Fi/LAN) open `https://<desktop-ip>:8080`.
-3. Accept the self-signed certificate warning.
-4. Touch or drag in the top half of the screen.
+Add a bookmark to your homescreen to access the app fullscreen and allow
+swipes to work properly.
 
+Swipe left/right from screen edge to switch tools.  Rotate
+device to landscape orientation to use tool fullscreen.
 
-## Notes
+## Implementor notes
 
 - Coordinates `x` and `y` are normalized to `[0,1]` relative to the trackpad area.
 - The data channel is configured with `ordered: false, maxRetransmits: 0` for minimum latency; lost touch events are acceptable because the next event is the current state.
