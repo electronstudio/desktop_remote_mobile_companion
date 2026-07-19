@@ -4,6 +4,13 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <meta name="app-version" content="{{VERSION}}">
+  <meta name="theme-color" content="#111111">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Desktop Remote">
+  <link rel="manifest" href="/manifest.json">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <link rel="icon" type="image/png" sizes="512x512" href="/icon-512.png">
   <title>Desktop Remote</title>
   <style>
     * { box-sizing: border-box; }
@@ -19,78 +26,199 @@
       user-select: none;
       -webkit-user-select: none;
       -webkit-touch-callout: none;
-    }
-    #trackpad {
-      height: 50vh;
-      width: 100vw;
-      background: #222;
-      border-bottom: 2px solid #444;
+      overscroll-behavior: none;
       touch-action: none;
+    }
+    .area {
+      position: relative;
+      width: 100vw;
+      overflow: hidden;
+    }
+    #area-top {
+      height: calc(50vh - 6px);
+    }
+    #area-bottom {
+      height: calc(50vh - 6px);
+    }
+    .splitter {
+      position: relative;
+      width: 100vw;
+      height: 12px;
+      z-index: 20;
+      touch-action: none;
+      user-select: none;
+      -webkit-user-select: none;
+      -webkit-touch-callout: none;
+      cursor: ns-resize;
       display: flex;
       align-items: center;
       justify-content: center;
+    }
+    .splitter-line {
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 5px;
+      height: 2px;
+      background: #444;
+    }
+    .splitter-icon {
+      position: relative;
+      width: 24px;
+      height: 8px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      align-items: center;
+      pointer-events: none;
+    }
+    .splitter-icon::before,
+    .splitter-icon::after {
+      content: '';
+      display: block;
+      width: 16px;
+      height: 2px;
+      background: #888;
+      border-radius: 1px;
+    }
+    .edge-zone {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      width: 25px;
+      z-index: 10;
+      touch-action: none;
+      user-select: none;
+      -webkit-user-select: none;
+      -webkit-touch-callout: none;
+    }
+    .edge-zone.left { left: 0; }
+    .edge-zone.right { right: 0; }
+    .edge-zone::before {
+      content: '';
+      position: absolute;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 12px;
+      height: 40px;
+      border: 1px solid #888;
+      border-radius: 2px;
+      opacity: 0.5;
+      pointer-events: none;
+      box-sizing: border-box;
+    }
+    .edge-zone.left::before { left: 0; }
+    .edge-zone.right::before { right: 0; }
+    .edge-zone::after {
+      content: '';
+      position: absolute;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 0;
+      height: 0;
+      opacity: 0.5;
+      pointer-events: none;
+    }
+    .edge-zone.left::after {
+      left: 3px;
+      border-top: 5px solid transparent;
+      border-bottom: 5px solid transparent;
+      border-left: 4px solid #888;
+    }
+    .edge-zone.right::after {
+      right: 3px;
+      border-top: 5px solid transparent;
+      border-bottom: 5px solid transparent;
+      border-right: 4px solid #888;
+    }
+    .carousel {
+      display: flex;
+      width: 100%;
+      height: 100%;
+      transition: transform 0.3s ease;
+    }
+    .carousel.no-transition {
+      transition: none;
+    }
+    .panel {
+      flex: 0 0 100%;
+      height: 100%;
+      touch-action: none;
+      position: relative;
+      overflow: hidden;
+    }
+    .touch-panel {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #222;
       user-select: none;
       -webkit-user-select: none;
       -webkit-touch-callout: none;
       -webkit-user-drag: none;
       -webkit-tap-highlight-color: transparent;
     }
-    #trackpad-label {
+    .touch-label {
       color: #666;
       font-size: 1.2rem;
       pointer-events: none;
     }
-    #status {
-      height: 50vh;
-      width: 100vw;
+    .tablet-surface {
+      height: 85%;
+      width: 100%;
       display: flex;
-      flex-direction: column;
-      font-family: monospace;
-      font-size: 0.85rem;
-    }
-    #status-header {
-      padding: 0.5rem;
-      border-bottom: 1px solid #444;
-      display: flex;
-      justify-content: space-between;
       align-items: center;
-      flex-shrink: 0;
-      background: #1a1a1a;
-      gap: 0.5rem;
-    }
-    #version {
-      color: #888;
-    }
-    #mode {
+      justify-content: center;
       background: #222;
-      color: #eee;
-      border: 1px solid #444;
-      border-radius: 4px;
-      padding: 0.2rem 0.4rem;
+      position: relative;
+      user-select: none;
+      -webkit-user-select: none;
+      -webkit-touch-callout: none;
+      -webkit-user-drag: none;
+      -webkit-tap-highlight-color: transparent;
     }
-    #buttons {
-      display: none;
-      gap: 0.25rem;
-    }
-    #buttons.visible {
+    .tablet-buttons {
+      height: 15%;
+      width: 100%;
       display: flex;
+      border-top: 2px solid #444;
     }
-    .click-btn {
+    .tablet-btn {
+      flex: 1;
       background: #333;
       color: #eee;
-      border: 1px solid #555;
-      border-radius: 4px;
-      padding: 0.2rem 0.6rem;
+      border: none;
+      border-right: 1px solid #555;
       font: inherit;
+      font-size: 1rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
       touch-action: none;
       user-select: none;
       -webkit-user-select: none;
       -webkit-touch-callout: none;
     }
-    .click-btn:active {
+    .tablet-btn:last-child {
+      border-right: none;
+    }
+    .tablet-btn:active {
       background: #555;
     }
-    #log {
+    .log-panel {
+      display: flex;
+      flex-direction: column;
+      background: #1a1a1a;
+      font-family: monospace;
+      font-size: 0.85rem;
+    }
+    .log-version {
+      padding: 0.5rem;
+      border-bottom: 1px solid #444;
+      color: #888;
+      flex-shrink: 0;
+    }
+    .log-content {
       flex: 1;
       padding: 0.5rem;
       overflow-y: auto;
@@ -103,24 +231,59 @@
   </style>
 </head>
 <body>
-  <div id="trackpad">
-    <div id="trackpad-label">Touch area</div>
-  </div>
-  <div id="status">
-    <div id="status-header">
-      <span id="version">v{{VERSION}}</span>
-      <div id="buttons">
-        <button class="click-btn" data-button="left">L</button>
-        <button class="click-btn" data-button="middle">M</button>
-        <button class="click-btn" data-button="right">R</button>
+  <div class="area" id="area-top">
+    <div class="edge-zone left"></div>
+    <div class="edge-zone right"></div>
+    <div class="carousel">
+      <div class="panel touch-panel" data-panel="trackpad">
+        <div class="touch-label">Trackpad</div>
       </div>
-      <label>Mode: <select id="mode">
-        <option value="trackpad" selected>Trackpad</option>
-        <option value="tablet">Tablet</option>
-      </select></label>
+      <div class="panel" data-panel="tablet">
+        <div class="tablet-surface">
+          <div class="touch-label">Tablet</div>
+        </div>
+        <div class="tablet-buttons">
+          <button class="tablet-btn" data-button="left">L</button>
+          <button class="tablet-btn" data-button="middle">M</button>
+          <button class="tablet-btn" data-button="right">R</button>
+        </div>
+      </div>
+      <div class="panel log-panel" data-panel="log">
+        <div class="log-version">v{{VERSION}}</div>
+        <div class="log-content">Connecting...</div>
+      </div>
     </div>
-    <div id="log">Connecting...</div>
   </div>
+
+  <div class="splitter">
+    <div class="splitter-line"></div>
+    <div class="splitter-icon"></div>
+  </div>
+
+  <div class="area" id="area-bottom">
+    <div class="edge-zone left"></div>
+    <div class="edge-zone right"></div>
+    <div class="carousel">
+      <div class="panel touch-panel" data-panel="trackpad">
+        <div class="touch-label">Trackpad</div>
+      </div>
+      <div class="panel" data-panel="tablet">
+        <div class="tablet-surface">
+          <div class="touch-label">Tablet</div>
+        </div>
+        <div class="tablet-buttons">
+          <button class="tablet-btn" data-button="left">L</button>
+          <button class="tablet-btn" data-button="middle">M</button>
+          <button class="tablet-btn" data-button="right">R</button>
+        </div>
+      </div>
+      <div class="panel log-panel" data-panel="log">
+        <div class="log-version">v{{VERSION}}</div>
+        <div class="log-content">Connecting...</div>
+      </div>
+    </div>
+  </div>
+
   <script>window.APP_VERSION = "{{VERSION}}";</script>
   <script src="/app.js?v={{VERSION}}"></script>
 </body>
