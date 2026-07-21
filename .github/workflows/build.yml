@@ -84,13 +84,13 @@ jobs:
           CGO_LDFLAGS: "-L${{ env.FFMPEG_PREFIX }}/lib"
           PKG_CONFIG_PATH: "${{ env.FFMPEG_PREFIX }}/lib/pkgconfig"
           PKG_CONFIG: "pkg-config --static"
-        run: go build -ldflags "-linkmode external"
+        run: go build -o companion -ldflags "-linkmode external"
 
       - name: Stage artifact
         run: |
           name="desktop_remote_mobile_companion-linux-x86_64-${{ needs.get-version.outputs.version }}"
           mkdir -p "dist/$name"
-          cp desktop_remote_mobile_companion "dist/$name/"
+          cp companion "dist/$name/"
           cp README.md LICENSE "dist/$name/"
 
       - name: Upload
@@ -186,14 +186,14 @@ jobs:
           CGO_LDFLAGS: "-L${FFMPEG_PREFIX}/lib -lntdll -lsetupapi"
           PKG_CONFIG_PATH: "${FFMPEG_PREFIX}/lib/pkgconfig"
           PKG_CONFIG: "pkg-config --static"
-        run: go build -ldflags "-linkmode external" -o desktop_remote_mobile_companion.exe
+        run: go build -o companion -ldflags "-linkmode external" -o companion.exe
 
       - name: Stage artifact
         shell: msys2 {0}
         run: |
           name="desktop_remote_mobile_companion-windows-x86_64-${{ needs.get-version.outputs.version }}"
           mkdir -p "dist/$name"
-          cp desktop_remote_mobile_companion.exe "dist/$name/"/
+          cp companion.exe "dist/$name/"/
           cp README.md LICENSE "dist/$name/"
 
       - name: Upload binary
@@ -256,7 +256,7 @@ jobs:
           for dir in artifacts/desktop_remote_mobile_companion-*; do
             name=$(basename "$dir")
             if [[ "$name" == desktop_remote_mobile_companion-linux-* ]]; then
-              chmod +x "artifacts/$name/desktop_remote_mobile_companion"
+              chmod +x "artifacts/$name/companion"
               (cd artifacts && tar -cJf "../$outdir/$name.tar.xz" "$name")
             else
               (cd artifacts && zip -r "../$outdir/$name.zip" "$name")

@@ -1,4 +1,4 @@
-desktop_remote_mobile_companion
+companion
 *.exe
 server.crt
 server.key

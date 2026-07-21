@@ -58,7 +58,7 @@ go run . -p 8443
 Build the binary:
 
 ```bash
-go build .
+go build -o companion .
 ```
 
 The static HTML/JS assets are embedded into the binary using `//go:embed`, so the single compiled binary is self-contained.
@@ -80,7 +80,7 @@ Command-line flags are handled by `github.com/alexflint/go-arg`.
 Example:
 
 ```bash
-./desktop_remote_mobile_companion --port 8443
+./companion --port 8443
 ```
 
 ## TLS certificate
@@ -124,7 +124,7 @@ At startup, when video is enabled (the default, i.e. not `--no-video`), the serv
 To grant the capability to the binary once (no need to run as root afterwards):
 
 ```bash
-sudo setcap cap_sys_admin+ep ./desktop_remote_mobile_companion
+sudo setcap cap_sys_admin+ep ./companion
 ```
 
 `setcap` is stored as a file extended attribute, so it must be re-applied after every rebuild (the file is replaced). Alternatively run with `--no-video` to use only the trackpad/tablet. Running the binary as root also works but is not recommended.

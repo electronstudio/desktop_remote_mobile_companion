@@ -32,22 +32,6 @@ DRMC uses hardware accelerated VAAPI encoding.
 
 DRMC is written in Go rather than Rust.
 
-## Build
-
-```bash
-go build
-```
-
-Desktop video streaming requires VAAPI and the FFmpeg/libdrm C development
-libraries. On Debian/Ubuntu:
-
-    sudo apt install libavcodec-dev libavfilter-dev libavformat-dev \
-        libavutil-dev libavdevice-dev libdrm-dev
-
-It also requires a VAAPI-capable GPU and access to the DRM device
-(`/dev/dri/card*`). The capture pipeline uses the `kmsgrab` demuxer and the
-`h264_vaapi` hardware encoder. If video is unavailable the trackpad and
-tablet still work; the tablet panel just shows a placeholder.
 
 ## Install
 
@@ -59,12 +43,12 @@ Needs uinput group permissions.  Enter this command then reboot:
 
 To enable desktop video capture, grant CAP_SYS_ADMIN to the binary once (no need to run as root afterwards):
 
-    sudo setcap cap_sys_admin+ep desktop_remote_mobile_companion
+    sudo setcap cap_sys_admin+ep companion
 
 ## Run
 
 ```bash
-./desktop_remote_mobile_companion --port 8080
+./companion --port 8080
 ```
 
 Video streaming flags:
@@ -89,6 +73,27 @@ swipes to work properly.
 
 Swipe left/right from screen edge to switch tools.  Rotate
 device to landscape orientation to use tool fullscreen.
+
+
+## Build
+
+### Arch (CachyOS, Artix, etc) Linux
+
+```bash
+git clone https://github.com/electronstudio/desktop_remote_mobile_companion.git
+cd desktop_remote_mobile_companion
+makepkg -si
+```
+
+### Debian, Ubuntu etc
+
+```bash
+sudo apt install libavcodec-dev libavfilter-dev libavformat-dev \
+        libavutil-dev libavdevice-dev libdrm-dev
+go build -o companion
+```
+
+
 
 ## Implementor notes
 
