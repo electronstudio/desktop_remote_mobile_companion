@@ -7,6 +7,9 @@ on:
   # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
 
+env:
+  FFMPEG_VERSION: "8.1.2"
+
 jobs:
   get-version:
     runs-on: ubuntu-latest
@@ -23,6 +26,10 @@ jobs:
     needs: get-version
     runs-on: ubuntu-22.04
 
+    env:
+      FFMPEG_PREFIX: ${{ github.workspace }}/ffmpeg
+      CGO_ENABLED: "1"
+
     steps:
       - uses: actions/checkout@v7
         with:
@@ -32,11 +39,52 @@ jobs:
         with:
           go-version: "^1.26"
 
-      - name: Install libs
-        run: sudo apt install -y libavcodec-dev libavfilter-dev libavformat-dev libavutil-dev libavdevice-dev libdrm-dev
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            nasm \
+            pkg-config \
+            libdrm-dev \
+            libva-dev
+
+      - name: Cache FFmpeg build
+        id: cache-ffmpeg
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/ffmpeg
+          key: ffmpeg-${{ env.FFMPEG_VERSION }}-linux-ubuntu22.04-${{ hashFiles('.github/workflows/build.yml') }}
+
+      - name: Build FFmpeg from source
+        if: steps.cache-ffmpeg.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          curl -L -o /tmp/ffmpeg.tar.xz "https://ffmpeg.org/releases/ffmpeg-${{ env.FFMPEG_VERSION }}.tar.xz"
+          tar -C /tmp -xJf /tmp/ffmpeg.tar.xz
+          cd "/tmp/ffmpeg-${{ env.FFMPEG_VERSION }}"
+          ./configure \
+            --prefix="${{ env.FFMPEG_PREFIX }}" \
+            --enable-static \
+            --disable-shared \
+            --enable-gpl \
+            --enable-version3 \
+            --enable-libdrm \
+            --enable-vaapi \
+            --disable-doc \
+            --disable-programs \
+            --disable-ffplay \
+            --disable-ffprobe
+          make -j"$(nproc)"
+          make install
 
       - name: Build
-        run: go build
+        env:
+          CGO_CFLAGS: "-I${{ env.FFMPEG_PREFIX }}/include"
+          CGO_LDFLAGS: "-L${{ env.FFMPEG_PREFIX }}/lib"
+          PKG_CONFIG_PATH: "${{ env.FFMPEG_PREFIX }}/lib/pkgconfig"
+          PKG_CONFIG: "pkg-config --static"
+        run: go build -ldflags "-linkmode external"
 
       - name: Stage artifact
         run: |
@@ -56,6 +104,10 @@ jobs:
     needs: get-version
     runs-on: windows-2022
 
+    env:
+      FFMPEG_PREFIX: /c/ffmpeg
+      CGO_ENABLED: "1"
+
     steps:
       - uses: actions/checkout@v7
         with:
@@ -65,13 +117,79 @@ jobs:
         with:
           go-version: "^1.26"
 
-      - name: Build
-        shell: bash
+      - name: Setup MSYS2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: |
+            mingw-w64-x86_64-toolchain
+            mingw-w64-x86_64-nasm
+            mingw-w64-x86_64-pkg-config
+            make
+            diffutils
+            patch
+
+      - name: Cache FFmpeg build
+        id: cache-ffmpeg
+        uses: actions/cache@v4
+        with:
+          path: C:\ffmpeg
+          key: ffmpeg-${{ env.FFMPEG_VERSION }}-windows-msys2-mingw64-${{ hashFiles('.github/workflows/build.yml') }}
+
+      - name: Build FFmpeg from source
+        if: steps.cache-ffmpeg.outputs.cache-hit != 'true'
+        shell: msys2 {0}
         run: |
-          go build
+          set -euo pipefail
+          mkdir -p /tmp
+          curl -L -o /tmp/ffmpeg.tar.xz "https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz"
+          tar -C /tmp -xJf /tmp/ffmpeg.tar.xz
+          cd "/tmp/ffmpeg-${FFMPEG_VERSION}"
+
+          # Work around Windows command-line length limits when archiving
+          # many object files into the static libraries.
+          patch -p1 <<'PATCH' || true
+          diff --git a/ffbuild/library.mak b/ffbuild/library.mak
+          index 793e9d41fa..e3c15e1d67 100644
+          --- a/ffbuild/library.mak
+          +++ b/ffbuild/library.mak
+          @@ -35,7 +35,8 @@ OBJS += $(SHLIBOBJS)
+           endif
+           $(SUBDIR)$(LIBNAME): $(OBJS) $(STLIBOBJS)
+          	$(RM) $@
+          -	$(AR) $(ARFLAGS) $(AR_O) $^
+          +	$(file > objs.txt, $^)
+          +	$(AR) $(ARFLAGS) $(AR_O) @objs.txt
+          	$(RANLIB) $@
+
+           install-headers: install-lib$(NAME)-headers install-lib$(NAME)-pkgconfig
+          PATCH
+
+          ./configure \
+            --prefix="${FFMPEG_PREFIX}" \
+            --enable-static \
+            --disable-shared \
+            --enable-gpl \
+            --enable-version3 \
+            --disable-doc \
+            --disable-programs \
+            --disable-ffplay \
+            --disable-ffprobe
+          make -j"$(nproc)"
+          make install
+
+      - name: Build
+        shell: msys2 {0}
+        env:
+          CGO_CFLAGS: "-I${FFMPEG_PREFIX}/include"
+          CGO_LDFLAGS: "-L${FFMPEG_PREFIX}/lib -lntdll -lsetupapi"
+          PKG_CONFIG_PATH: "${FFMPEG_PREFIX}/lib/pkgconfig"
+          PKG_CONFIG: "pkg-config --static"
+        run: go build -ldflags "-linkmode external" -o desktop_remote_mobile_companion.exe
 
       - name: Stage artifact
-        shell: bash
+        shell: msys2 {0}
         run: |
           name="desktop_remote_mobile_companion-windows-x86_64-${{ needs.get-version.outputs.version }}"
           mkdir -p "dist/$name"
