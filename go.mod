@@ -4,6 +4,7 @@ go 1.24.4
 
 require (
 	github.com/alexflint/go-arg v1.6.1
+	github.com/asticode/go-astiav v0.41.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/jbdemonte/virtual-device v1.2.1
 	github.com/mdp/qrterminal/v3 v3.2.1
@@ -12,6 +13,7 @@ require (
 
 require (
 	github.com/alexflint/go-scalar v1.2.0 // indirect
+	github.com/asticode/go-astikit v0.42.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/pion/datachannel v1.6.2 // indirect
 	github.com/pion/dtls/v3 v3.1.4 // indirect

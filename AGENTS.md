@@ -34,12 +34,13 @@ github.com/electronstudio/desktop_remote_mobile_companion
                              +-----------------+
 ```
 
-- `main.go` — HTTPS server, self-signed certificate generation, WebSocket signaling handler, WebRTC peer connection, data-channel receiver, device routing, version injection.
+- `main.go` — HTTPS server, self-signed certificate generation, WebSocket signaling handler, WebRTC peer connection, data-channel receiver, device routing, version injection, desktop video track wiring.
 - `input/event.go` — shared `Touch`/`Event` types and coordinate helpers used by both devices.
 - `trackpad/trackpad.go` — virtual Linux multitouch trackpad (Stage 2).
 - `tablet/tablet.go` — virtual Linux absolute graphics tablet.
-- `static/index.html` — responsive touch UI with mode selector and version display.
-- `static/app.js` — browser WebRTC client, touch-event capture, and mode switching.
+- `video/video.go` — desktop capture (kmsgrab) + VAAPI scale + h264_vaapi encode pipeline feeding a Pion H264 WebRTC track.
+- `static/index.html` — responsive touch UI with mode selector, embedded desktop `<video>` in the tablet panel, and version display.
+- `static/app.js` — browser WebRTC client, touch-event capture, mode switching, recv-only video transceiver + `ontrack` rendering with visibility gating.
 - `VERSION` — embedded version string, displayed by both server and client.
 
 ## Build and run
@@ -69,6 +70,12 @@ Command-line flags are handled by `github.com/alexflint/go-arg`.
 | Flag | Default | Description |
 |---|---|---|
 | `-p`, `--port` | `8080` | HTTPS listen port |
+| `--no-video` | `false` | Disable desktop video streaming entirely |
+| `--video-card` | (auto) | DRM card to capture (e.g. `/dev/dri/card1`); empty auto-detects the first `/dev/dri/card*` |
+| `--video-fps` | `30` | Video capture frame rate |
+| `--video-qp` | `24` | h264_vaapi constant-quality QP |
+| `--low-power` | `1` | h264_vaapi low-power mode (0 or 1) |
+| `--video-width` | `0` | Cap output width; `0` = native (reserved for future downscaling) |
 
 Example:
 
@@ -169,6 +176,25 @@ The server prints the raw JSON line to stdout using `fmt.Printf`.
 - **Clickpad button model**: the device only advertises `BTN_LEFT` plus the `INPUT_PROP_BUTTONPAD` property. Real clickpads do not advertise a physical `BTN_RIGHT`; that should be software-emulated.
 - **Graphics tablet mode**: the tablet device mimics a real pen tablet (e.g. Wacom Intuos, Surface Pen). It uses `BUS_VIRTUAL`, `BTN_TOOL_PEN` for proximity, `ABS_X`/`ABS_Y` (0..32767, 200 units/mm), `ABS_PRESSURE`, `ABS_DISTANCE`, and `ABS_MISC` for tool tracking via `MSC_SERIAL`. Touch acts as the pen hovering (cursor follows, no click). The client's L/M/R buttons map to `BTN_TOUCH` (tip = left click), `BTN_STYLUS` (right click), and `BTN_STYLUS2` (middle click). The axis resolution is set at device-creation time via `UI_ABS_SETUP` (Linux 4.16+) — see "Tablet axis resolution" below.
 
+## Desktop video streaming
+
+The phone's **tablet** panel shows a live H264 stream of the PC desktop, sent server→browser over the same WebRTC peer connection as the touch data channel (opposite direction). The browser adds a `recvonly` video transceiver; when the server's `signalHandler` sees a video m-line in the offer it builds a capture pipeline, `AddTrack`s an H264 `TrackLocalStaticSample`, and answers. H264 samples flow over RTP to the phone's `<video>` element.
+
+The capture pipeline (in `video/video.go`) mirrors:
+
+```
+ffmpeg -device /dev/dri/card0 -f kmsgrab -i - \
+    -vf 'hwmap=derive_device=vaapi,scale_vaapi=format=nv12' \
+    -c:v h264_vaapi -qp 24 -bf 0 -
+```
+
+Notes:
+- **VAAPI-only.** Requires a VAAPI-capable GPU, the `kmsgrab` demuxer, and `h264_vaapi` encoder. Build needs the FFmpeg/libdrm C dev packages (`libavcodec-dev libavfilter-dev libavformat-dev libavutil-dev libavdevice-dev libdrm-dev`) and CGO.
+- **Graceful degradation.** If `video.New` fails (no VAAPI/kmsgrab/`/dev/dri`), the server logs a warning, adds no video track, and trackpad/tablet keep working; the tablet panel shows its placeholder.
+- **Visibility gating.** The browser only attaches the track to a `<video>` while the tablet panel is the active panel in its area, so a hidden surface does no decode work.
+- **One client at a time.** The pipeline is created per peer connection; `kmsgrab` is exclusive, so only one phone receives video concurrently. A shared fan-out pipeline is future work (see `improvements.md`).
+- The fixed 30 fps default, an x11grab/libx264 software fallback, adaptive native framerate, and multi-client fan-out are tracked in `improvements.md`.
+
 ## Dependencies
 
 Key Go modules:
@@ -177,6 +203,7 @@ Key Go modules:
 - `github.com/gorilla/websocket` — WebSocket signaling server.
 - `github.com/alexflint/go-arg` — command-line argument parsing.
 - `github.com/jbdemonte/virtual-device` — virtual Linux input devices via `uinput`.
+- `github.com/asticode/go-astiav` — FFmpeg/libav C bindings for desktop capture (kmsgrab) and VAAPI H264 encoding.
 
 No JavaScript build step is used; `static/app.js` is served as-is.
 
@@ -202,6 +229,7 @@ Manual test flow:
    - For the tablet, run `evtest` and confirm `EV_ABS / ABS_X` and `ABS_Y` events are emitted as an absolute single-point contact.
    - Alternatively, `libinput debug-events` shows pointer, multitouch, and tablet-tool events.
 7. Switch the mode selector to “Tablet”, touch the phone, and confirm the cursor follows your finger as an absolute position. Press the L/M/R buttons and confirm `BTN_TOUCH`/`BTN_STYLUS`/`BTN_STYLUS2` events are emitted without moving the pointer.
+8. With video enabled (default), switch to the “Tablet” panel and confirm the desktop appears in the `<video>` element. Swipe away to another panel and confirm the video stops rendering; swipe back and confirm it resumes. Run with `--no-video` and confirm the tablet panel shows only the “Tablet” placeholder and trackpad/tablet still work.
 
 Automated headless Chromium checks are possible with `--ignore-certificate-errors` and `--virtual-time-budget`, but WebRTC connection setup timing is flaky in headless mode; prefer manual device testing.
 

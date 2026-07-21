@@ -11,6 +11,7 @@
     ws: null,
     pc: null,
     channel: null,
+    videoTrack: null,
     reconnectTimer: null,
     reconnectDelay: 1000,
     maxReconnectDelay: 10000
@@ -167,6 +168,7 @@
     releaseAllPointers(areaObj);
     arrangePanels(areaObj, areaObj.state.currentIndex, false);
     areaObj.state.settling = false;
+    attachVideoToSurfaces();
   }
 
   function startPan(areaObj, e, edge, zone) {
@@ -338,6 +340,7 @@
     });
 
     const areaObj = { el: areaEl, state, carousel, panels };
+    areaEl.__areaObj = areaObj;
 
     arrangePanels(areaObj, state.currentIndex, false);
 
@@ -376,6 +379,28 @@
     areaEl.addEventListener('contextmenu', e => e.preventDefault());
   }
 
+  function attachVideoToSurfaces() {
+    const track = conn.videoTrack;
+    document.querySelectorAll('.area').forEach(areaEl => {
+      const surface = areaEl.querySelector('.tablet-surface');
+      const video = surface ? surface.querySelector('.tablet-video') : null;
+      if (!video) return;
+      // Only render while the tablet panel is the active panel in this area.
+      const idx = areaEl.__areaObj ? areaEl.__areaObj.state.currentIndex : null;
+      const activePanel = idx != null ? PANEL_ORDER[idx] : null;
+      if (track && activePanel === 'tablet') {
+        if (video.srcObject === null || video.srcObject === undefined) {
+          const stream = new MediaStream([track]);
+          video.srcObject = stream;
+        }
+      } else {
+        if (video.srcObject) {
+          video.srcObject = null;
+        }
+      }
+    });
+  }
+
   function scheduleReconnect(reason) {
     if (conn.reconnectTimer) return;
     log(`${reason} — reconnecting in ${conn.reconnectDelay}ms...`, 'err');
@@ -396,6 +421,7 @@
       conn.pc = null;
       conn.channel = null;
     }
+    conn.videoTrack = null;
     clearTimeout(conn.reconnectTimer);
     conn.reconnectTimer = null;
   }
@@ -458,6 +484,33 @@
     conn.pc = new RTCPeerConnection(config);
 
     conn.channel = conn.pc.createDataChannel('touch', { ordered: true });
+
+    // Request a receive-only video track so the offer includes a video
+    // m-line. The server adds its send-only H264 track when it answers.
+    conn.pc.addTransceiver('video', { direction: 'recvonly' });
+
+    conn.pc.ontrack = e => {
+      if (myId !== conn.currentId) return;
+      const track = e.track || (e.streams[0] && e.streams[0].getVideoTracks()[0]);
+      if (!track || track.kind !== 'video') return;
+      conn.videoTrack = track;
+      log('Video track received', 'ok');
+      // Hide the placeholder once the first frame is rendered.
+      document.querySelectorAll('.tablet-video').forEach(video => {
+        video.addEventListener('playing', function onPlaying() {
+          video.removeEventListener('playing', onPlaying);
+          const surface = video.closest('.tablet-surface');
+          if (surface) surface.classList.add('has-video');
+        });
+      });
+      attachVideoToSurfaces();
+      track.onended = () => {
+        if (myId !== conn.currentId) return;
+        conn.videoTrack = null;
+        document.querySelectorAll('.tablet-surface').forEach(s => s.classList.remove('has-video'));
+        document.querySelectorAll('.tablet-video').forEach(v => { v.srcObject = null; });
+      };
+    };
 
     conn.channel.onopen = () => {
       if (myId !== conn.currentId) return;

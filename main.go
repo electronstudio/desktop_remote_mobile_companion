@@ -28,6 +28,7 @@ import (
 	"github.com/electronstudio/desktop_remote_mobile_companion/input"
 	"github.com/electronstudio/desktop_remote_mobile_companion/tablet"
 	"github.com/electronstudio/desktop_remote_mobile_companion/trackpad"
+	"github.com/electronstudio/desktop_remote_mobile_companion/video"
 	"github.com/gorilla/websocket"
 	"github.com/mdp/qrterminal/v3"
 	"github.com/pion/webrtc/v4"
@@ -39,19 +40,19 @@ var staticFS embed.FS
 //go:embed VERSION
 var version string
 
-const (
-	listenAddr = ":8081"
-	certFile   = "server.crt"
-	keyFile    = "server.key"
-	staticDir  = "static"
-)
-
 var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool { return true },
 }
 
 var cli struct {
 	Port int `arg:"-p,--port" default:"8080" help:"HTTPS listen port"`
+
+	NoVideo    bool   `arg:"--no-video" default:"false" help:"disable desktop video streaming"`
+	VideoCard  string `arg:"--video-card" default:"" help:"DRM card to capture (e.g. /dev/dri/card1); empty auto-detects"`
+	VideoFps   int    `arg:"--video-fps" default:"30" help:"video capture frame rate"`
+	VideoQP    int    `arg:"--video-qp" default:"24" help:"h264_vaapi constant-quality QP"`
+	VideoWidth int    `arg:"--video-width" default:"0" help:"cap video output width; 0 native (reserved for future)"`
+	LowPower   int    `arg:"--low-power" default:"0" help:"h264_vaapi low-power mode (0 or 1)"`
 }
 
 type signalMsg struct {
@@ -119,6 +120,18 @@ func main() {
 		signalHandler(w, r, pad, tabletDev)
 	})
 
+	if !cli.NoVideo {
+		log.Printf("desktop video streaming enabled (VAAPI/kmsgrab)")
+		if cli.VideoCard != "" {
+			log.Printf("  capture card: %s", cli.VideoCard)
+		} else {
+			log.Printf("  capture card: auto-detect")
+		}
+		log.Printf("  fps=%d qp=%d low-power=%d", cli.VideoFps, cli.VideoQP, cli.LowPower)
+	} else {
+		log.Printf("desktop video streaming disabled (--no-video)")
+	}
+
 	log.Printf("HTTPS listening on https://localhost%s", listenAddr)
 	log.Printf(" certificate stored in %s", certDir)
 	log.Printf(" certificate SHA-256 fingerprint: %s", fingerprint)
@@ -169,6 +182,11 @@ func signalHandler(w http.ResponseWriter, r *http.Request, pad *trackpad.Device,
 		writeMu.Unlock()
 	}
 
+	// videoStreamer holds the desktop capture pipeline for this connection.
+	// It is created only when the peer's offer contains a video media section
+	// and video is not disabled. It is nil otherwise.
+	var videoStreamer *video.Streamer
+
 	pc.OnDataChannel(func(dc *webrtc.DataChannel) {
 		log.Printf("data channel received from %s", r.RemoteAddr)
 		dc.OnMessage(func(msg webrtc.DataChannelMessage) {
@@ -210,7 +228,19 @@ func signalHandler(w http.ResponseWriter, r *http.Request, pad *trackpad.Device,
 
 	pc.OnConnectionStateChange(func(s webrtc.PeerConnectionState) {
 		log.Printf("peer connection state for %s: %s", r.RemoteAddr, s.String())
+		if s == webrtc.PeerConnectionStateConnected && videoStreamer != nil {
+			videoStreamer.Start()
+		}
 	})
+
+	// stopVideo stops the capture pipeline (if any) once for this connection.
+	stopVideo := func() {
+		if videoStreamer != nil {
+			videoStreamer.Stop()
+			videoStreamer = nil
+		}
+	}
+	defer stopVideo()
 
 	for {
 		_, data, err := ws.ReadMessage()
@@ -236,6 +266,32 @@ func signalHandler(w http.ResponseWriter, r *http.Request, pad *trackpad.Device,
 				log.Printf("setRemoteDescription failed: %v", err)
 				continue
 			}
+
+			// If the offer requests video and video is enabled, build the
+			// capture pipeline and add its track before answering. Failure
+			// is non-fatal: we answer without a video track and the client
+			// keeps using trackpad/tablet.
+			if !cli.NoVideo && hasVideoMedia(msg.SDP) && videoStreamer == nil {
+				vs, err := video.New(video.Config{
+					CardPath:  cli.VideoCard,
+					MaxWidth:  cli.VideoWidth,
+					FrameRate: cli.VideoFps,
+					QP:        cli.VideoQP,
+					LowPower:  cli.LowPower,
+				})
+				if err != nil {
+					log.Printf("video unavailable for %s: %v", r.RemoteAddr, err)
+				} else {
+					if _, err := pc.AddTrack(vs.Track); err != nil {
+						log.Printf("add video track failed for %s: %v", r.RemoteAddr, err)
+						vs.Stop()
+					} else {
+						videoStreamer = vs
+						log.Printf("video track added for %s", r.RemoteAddr)
+					}
+				}
+			}
+
 			answer, err := pc.CreateAnswer(nil)
 			if err != nil {
 				log.Printf("createAnswer failed: %v", err)
@@ -364,6 +420,13 @@ func certFingerprint(path string) (string, error) {
 	}
 	sum := sha256.Sum256(cert.Raw)
 	return hex.EncodeToString(sum[:]), nil
+}
+
+// hasVideoMedia reports whether an SDP description contains a video media
+// section (m=video). We use it to decide whether to build the capture
+// pipeline before answering.
+func hasVideoMedia(sdp string) bool {
+	return strings.Contains(sdp, "m=video")
 }
 
 func localIPs() []string {

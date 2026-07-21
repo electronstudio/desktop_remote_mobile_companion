@@ -177,6 +177,25 @@
       -webkit-user-drag: none;
       -webkit-tap-highlight-color: transparent;
     }
+    .tablet-video {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      background: #000;
+      pointer-events: none;
+      z-index: 1;
+      -webkit-user-drag: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .tablet-surface .touch-label {
+      position: relative;
+      z-index: 2;
+    }
+    .tablet-surface.has-video .touch-label {
+      display: none;
+    }
     .tablet-buttons {
       height: 15%;
       width: 100%;
@@ -240,6 +259,7 @@
       </div>
       <div class="panel" data-panel="tablet">
         <div class="tablet-surface">
+          <video class="tablet-video" autoplay muted playsinline></video>
           <div class="touch-label">Tablet</div>
         </div>
         <div class="tablet-buttons">
@@ -269,6 +289,7 @@
       </div>
       <div class="panel" data-panel="tablet">
         <div class="tablet-surface">
+          <video class="tablet-video" autoplay muted playsinline></video>
           <div class="touch-label">Tablet</div>
         </div>
         <div class="tablet-buttons">
