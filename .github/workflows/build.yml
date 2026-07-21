@@ -180,14 +180,29 @@ jobs:
         with:
           go-version: "^1.26"
 
+      - name: Set Windows build environment
+        shell: msys2 {0}
+        run: |
+          echo "CGO_CFLAGS=-I/c/ffmpeg/include" >> $GITHUB_ENV
+          echo "CGO_LDFLAGS=-L/c/ffmpeg/lib -lntdll -lsetupapi" >> $GITHUB_ENV
+          echo "PKG_CONFIG=pkg-config --static" >> $GITHUB_ENV
+
+      - name: Verify FFmpeg pkg-config files
+        shell: msys2 {0}
+        run: |
+          export PKG_CONFIG_PATH="/c/ffmpeg/lib/pkgconfig"
+          echo "PKG_CONFIG_PATH=$PKG_CONFIG_PATH"
+          which pkg-config
+          pkg-config --version
+          ls -la /c/ffmpeg/lib/pkgconfig/ || true
+          pkg-config --list-all | grep -i '^libav' || true
+          pkg-config --cflags libavcodec || true
+
       - name: Build
         shell: msys2 {0}
-        env:
-          CGO_CFLAGS: "-I${FFMPEG_PREFIX}/include"
-          CGO_LDFLAGS: "-L${FFMPEG_PREFIX}/lib -lntdll -lsetupapi"
-          PKG_CONFIG_PATH: "${FFMPEG_PREFIX}/lib/pkgconfig"
-          PKG_CONFIG: "pkg-config --static"
-        run: go build -ldflags "-linkmode external" -o companion.exe
+        run: |
+          export PKG_CONFIG_PATH="/c/ffmpeg/lib/pkgconfig"
+          go build -ldflags "-linkmode external" -o companion.exe
 
       - name: Stage artifact
         shell: msys2 {0}
