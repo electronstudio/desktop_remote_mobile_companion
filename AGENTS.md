@@ -129,6 +129,18 @@ sudo setcap cap_sys_admin+ep ./desktop_remote_mobile_companion
 
 `setcap` is stored as a file extended attribute, so it must be re-applied after every rebuild (the file is replaced). Alternatively run with `--no-video` to use only the trackpad/tablet. Running the binary as root also works but is not recommended.
 
+### File capabilities and nosuid mounts
+
+`setcap` only takes effect on filesystems mounted **without** `nosuid`. The `nosuid` mount option silently disables file capabilities: `setcap` writes the `security.capability` xattr (so `getcap` shows the cap) but the kernel ignores it at exec time, so the process still lacks `CAP_SYS_ADMIN`. The startup check detects this (via `statfs` + `ST_NOSUID` on the executable's path) and prints a nosuid-specific message instead of the generic `setcap` advice.
+
+If your binary lives on a `nosuid` mount (common for encrypted/home partitions such as `/encrypted`, `/home`, or a separate `/usr` with `nodev,nosuid`), either:
+
+- Copy/move the binary to a non-`nosuid` location (e.g. `/usr/local/bin`, `/opt`, `/tmp`) and `setcap` there, or
+- Remount that filesystem with `suid` (add `suid` to its mount options in `/etc/fstab` or mount it with `suid`), then re-run `setcap`, or
+- Run the program as root (`sudo`), which has `CAP_SYS_ADMIN` in its bounding set regardless of `nosuid`.
+
+Check a mount's options with `findmnt <path>` or `mount | grep <path>`.
+
 ## Tablet axis resolution
 
 The virtual graphics tablet advertises `ABS_X`/`ABS_Y` resolution of 200 units/mm. libinput rejects tablets with zero resolution ("missing tablet capabilities: resolution") and ignores the device for the whole session, so the resolution must be visible to libinput at probe time.

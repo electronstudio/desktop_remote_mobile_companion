@@ -142,7 +142,18 @@ func main() {
 			log.Printf("warning: could not check CAP_SYS_ADMIN (%v); desktop video may fail", err)
 		} else if !ok {
 			log.Printf("warning: desktop video streaming disabled for this run: the process lacks CAP_SYS_ADMIN, which kmsgrab needs to capture the framebuffer.")
-			log.Print(videoMissingCapInstructions)
+			// File capabilities (setcap) are the preferred fix, but they are
+			// silently ignored on nosuid mounts, so give the right advice for
+			// the actual situation instead of sending the user down a blind
+			// alley. sudo works regardless (root has the cap in its bounding set).
+			if nosuid, ferr := onNoSuidMount(); ferr != nil {
+				log.Printf("note: could not determine whether the executable is on a nosuid mount (%v)", ferr)
+				log.Print(videoMissingCapInstructions)
+			} else if nosuid {
+				log.Print(videoMissingCapOnNoSuidMountInstructions)
+			} else {
+				log.Print(videoMissingCapInstructions)
+			}
 			videoEnabled = false
 		}
 	}

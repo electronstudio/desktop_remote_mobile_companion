@@ -9,6 +9,7 @@ require (
 	github.com/jbdemonte/virtual-device v1.2.1
 	github.com/mdp/qrterminal/v3 v3.2.1
 	github.com/pion/webrtc/v4 v4.2.16
+	golang.org/x/sys v0.41.0
 )
 
 require (
@@ -33,7 +34,6 @@ require (
 	github.com/wlynxg/anet v0.0.5 // indirect
 	golang.org/x/crypto v0.48.0 // indirect
 	golang.org/x/net v0.50.0 // indirect
-	golang.org/x/sys v0.41.0 // indirect
 	golang.org/x/term v0.40.0 // indirect
 	golang.org/x/time v0.14.0 // indirect
 	rsc.io/qr v0.2.0 // indirect

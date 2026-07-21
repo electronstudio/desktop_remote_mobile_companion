@@ -8,6 +8,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
+
+	"golang.org/x/sys/unix"
 )
 
 // capSysAdminBit is the bit position of CAP_SYS_ADMIN in the Linux capability
@@ -45,4 +47,26 @@ func hasCapSysAdmin() (bool, error) {
 		return false, err
 	}
 	return false, errors.New("CapEff not found in /proc/self/status")
+}
+
+// onNoSuidMount reports whether the executable's filesystem is mounted with
+// the MS_NOSUID flag. On a nosuid mount the kernel ignores the
+// security.capability xattr, so `setcap cap_sys_admin+ep <binary>` writes the
+// attribute (getcap shows it) but the capability is never granted at exec
+// time. This is a common reason setcap appears to do nothing.
+//
+// If the executable path cannot be determined or statfs fails, it returns
+// false and the error; callers should fall back to the generic setcap advice.
+func onNoSuidMount() (bool, error) {
+	exe, err := os.Executable()
+	if err != nil {
+		// os.Executable may fail on some platforms but not on Linux; if it
+		// somehow does, fall back to argv[0]-ish behavior via /proc/self/exe.
+		exe = "/proc/self/exe"
+	}
+	var st unix.Statfs_t
+	if err := unix.Statfs(exe, &st); err != nil {
+		return false, err
+	}
+	return st.Flags&unix.ST_NOSUID != 0, nil
 }
