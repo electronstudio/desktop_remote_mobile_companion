@@ -1,5 +1,7 @@
 # Desktop Remote Mobile Companion
 
+[![AI-DECLARATION: pair](https://img.shields.io/badge/䷼%20AI--DECLARATION-pair-ffedd5?labelColor=ffedd5)](https://ai-declaration.md)
+
 Connect your mobile device wirelessly to your PC and use it as:
 
 * Trackpad
@@ -67,14 +69,14 @@ To enable desktop video capture, grant CAP_SYS_ADMIN to the binary once (no need
 
 Video streaming flags:
 
-| Flag | Default | Description |
-|---|---|---|
-| `--no-video` | off | Disable desktop video streaming entirely. |
-| `--video-card` | auto | DRM card to capture (`/dev/dri/card1`); empty auto-detects. |
-| `--video-fps` | `30` | Video capture frame rate. |
-| `--video-qp` | `24` | h264_vaapi constant-quality QP (lower = higher quality). |
-| `--low-power` | `1` | h264_vaapi low-power mode (0 or 1). |
-| `--video-width` | `0` | Cap output width; `0` = native  |
+| Flag            | Default | Description                                                 |
+|-----------------|---------|-------------------------------------------------------------|
+| `--no-video`    | off     | Disable desktop video streaming entirely.                   |
+| `--video-card`  | auto    | DRM card to capture (`/dev/dri/card1`); empty auto-detects. |
+| `--video-fps`   | `30`    | Video capture frame rate.                                   |
+| `--video-qp`    | `24`    | h264_vaapi constant-quality QP (lower = higher quality).    |
+| `--low-power`   | `0`     | h264_vaapi low-power mode (0 or 1).                         |
+| `--video-width` | `0`     | Cap output width; `0` = native                              |
 
 The first time it runs, a self-signed certificate is created in your user cache
 directory (`$HOME/.cache/desktop_remote_mobile_companion` on Linux).
