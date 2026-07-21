@@ -36,9 +36,9 @@ github.com/electronstudio/desktop_remote_mobile_companion
 
 - `main.go` — HTTPS server, self-signed certificate generation, WebSocket signaling handler, WebRTC peer connection, data-channel receiver, device routing, version injection, desktop video track wiring.
 - `input/event.go` — shared `Touch`/`Event` types and coordinate helpers used by both devices.
-- `trackpad/trackpad.go` — virtual Linux multitouch trackpad (Stage 2).
-- `tablet/tablet.go` — virtual Linux absolute graphics tablet.
-- `video/video.go` — desktop capture (kmsgrab) + VAAPI scale + h264_vaapi encode pipeline feeding a Pion H264 WebRTC track.
+- `trackpad/trackpad_linux.go` — virtual Linux multitouch trackpad (Stage 2).
+- `tablet/tablet_linux.go` — virtual Linux absolute graphics tablet.
+- `video/video_linux.go` — desktop capture (kmsgrab) + VAAPI scale + h264_vaapi encode pipeline feeding a Pion H264 WebRTC track.
 - `static/index.html` — responsive touch UI with mode selector, embedded desktop `<video>` in the tablet panel, and version display.
 - `static/app.js` — browser WebRTC client, touch-event capture, mode switching, recv-only video transceiver + `ontrack` rendering with visibility gating.
 - `VERSION` — embedded version string, displayed by both server and client.
@@ -211,7 +211,7 @@ The server prints the raw JSON line to stdout using `fmt.Printf`.
 
 The phone's **tablet** panel shows a live H264 stream of the PC desktop, sent server→browser over the same WebRTC peer connection as the touch data channel (opposite direction). The browser adds a `recvonly` video transceiver; when the server's `signalHandler` sees a video m-line in the offer it builds a capture pipeline, `AddTrack`s an H264 `TrackLocalStaticSample`, and answers. H264 samples flow over RTP to the phone's `<video>` element.
 
-The capture pipeline (in `video/video.go`) mirrors:
+The capture pipeline (in `video/video_linux.go`) mirrors:
 
 ```
 ffmpeg -device /dev/dri/card0 -f kmsgrab -i - \

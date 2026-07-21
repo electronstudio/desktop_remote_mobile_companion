@@ -193,8 +193,8 @@ const DEVICE = { TRACKPAD: 'trackpad', TABLET: 'tablet' };
 
 **Files / Functions**  
 - `input/event.go`
-- `trackpad/trackpad.go`: `ProcessEvent`
-- `tablet/tablet.go`: `ProcessEvent`
+- `trackpad/trackpad_linux.go`: `ProcessEvent`
+- `tablet/tablet_linux.go`: `ProcessEvent`
 - `main.go`: route table
 - `static/app.js`: send functions
 
@@ -243,7 +243,7 @@ func (d *Device) emitFrame(slots []touchpad.TouchSlot) error
 ```
 
 **Files / Functions**  
-- `trackpad/trackpad.go`: `ProcessEvent`, `acquireSlot`, `releaseSlot`
+- `trackpad/trackpad_linux.go`: `ProcessEvent`, `acquireSlot`, `releaseSlot`
 
 ---
 
@@ -293,14 +293,14 @@ func (d *Device) proximityOut() {
 Track which buttons are currently pressed (a small set) so `releaseButtons` is accurate.
 
 **Files / Functions**  
-- `tablet/tablet.go`: `ProcessEvent`, `proximityOut`
+- `tablet/tablet_linux.go`: `ProcessEvent`, `proximityOut`
 
 ---
 
 ## 8. Remove or re-evaluate the `input.Norm` / `DenormBi` helpers
 
 **Problem**  
-`input.Norm` converts `[0,1]` to `[-1,1]`, and `DenormBi` converts back to `[min,max]`. This round-trip is unnecessary for absolute tablet coordinates, and `tablet.go` bypasses it entirely with `int32(t.X * float64(axisMax))`. The float32 conversions also silently reduce precision.
+`input.Norm` converts `[0,1]` to `[-1,1]`, and `DenormBi` converts back to `[min,max]`. This round-trip is unnecessary for absolute tablet coordinates, and `tablet_linux.go` bypasses it entirely with `int32(t.X * float64(axisMax))`. The float32 conversions also silently reduce precision.
 
 **Recommended Change**  
 For absolute devices, add a single direct helper:
@@ -314,12 +314,12 @@ func Denorm(v float64, min, max int32) int32 {
 }
 ```
 
-Use it in both `trackpad.go` and `tablet.go`. Remove `Norm` and `DenormBi` unless they are genuinely needed by the underlying virtual-device library. If they are, keep them but make the precision trade-off explicit in a comment.
+Use it in both `trackpad_linux.go` and `tablet_linux.go`. Remove `Norm` and `DenormBi` unless they are genuinely needed by the underlying virtual-device library. If they are, keep them but make the precision trade-off explicit in a comment.
 
 **Files / Functions**  
 - `input/event.go`: `Norm`, `DenormBi`, `DenormUni`
-- `trackpad/trackpad.go`: coordinate conversion
-- `tablet/tablet.go`: coordinate conversion
+- `trackpad/trackpad_linux.go`: coordinate conversion
+- `tablet/tablet_linux.go`: coordinate conversion
 
 ---
 
@@ -394,7 +394,7 @@ type captureStage struct {
 Each stage owns its own `Close()` method. The top-level `Stop()` becomes a sequence of `s.encoder.Close(); s.filter.Close(); s.capture.Close()`.
 
 **Files / Functions**  
-- `video/video.go`: `Streamer`, `freeVideoCoding`
+- `video/video_linux.go`: `Streamer`, `freeVideoCoding`
 
 ---
 
@@ -429,7 +429,7 @@ for {
 This makes retry-vs-fatal decisions explicit and testable.
 
 **Files / Functions**  
-- `video/video.go`: `captureLoop`
+- `video/video_linux.go`: `captureLoop`
 
 ---
 
@@ -462,7 +462,7 @@ func (c *Config) Validate() error {
 Even better, set defaults in the CLI layer and treat zero values as errors in the library layer, so `video` does not silently change its input.
 
 **Files / Functions**  
-- `video/video.go`: `New`
+- `video/video_linux.go`: `New`
 - `main.go`: CLI defaults
 
 ---
@@ -673,8 +673,8 @@ Avoid `fmt.Printf` for server output; use `log.Printf` and let the terminal log 
 
 **Files / Functions**  
 - `main.go`: `fmt.Printf` in data-channel callback
-- `video/video.go`: all log lines
-- `tablet/tablet.go`, `trackpad/trackpad.go`
+- `video/video_linux.go`: all log lines
+- `tablet/tablet_linux.go`, `trackpad/trackpad_linux.go`
 
 ---
 
@@ -687,7 +687,7 @@ Avoid `fmt.Printf` for server output; use `log.Printf` and let the terminal log 
 Either remove the lint annotation if it is no longer needed, or add a short comment explaining why it is required. If the linter is misidentifying the field, prefer a targeted `//nolint:staticcheck` or similar rather than a generic `unused` suppression.
 
 **Files / Functions**  
-- `video/video.go`: `framesWritten`
+- `video/video_linux.go`: `framesWritten`
 
 ---
 

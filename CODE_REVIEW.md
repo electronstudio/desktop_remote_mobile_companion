@@ -39,7 +39,7 @@ return cert, fp, err
 ```
 
 ### A2. Unclamped tablet coordinates can leave the axis range
-**File:** `tablet/tablet.go` `ProcessEvent` (down/move branches):
+**File:** `tablet/tablet_linux.go` `ProcessEvent` (down/move branches):
 
 ```go
 d.x = int32(t.X * float64(axisMax))
@@ -77,7 +77,7 @@ or use `os.WriteFile` + `pem.EncodeToMemory`.
 ## B. Dead code & redundant abstractions
 
 ### B1. `trackpad.Device.slotID` is write-only
-**File:** `trackpad/trackpad.go` (fields `slotID [maxSlots]int`,
+**File:** `trackpad/trackpad_linux.go` (fields `slotID [maxSlots]int`,
 plus writes in `New`, `acquireSlot`, `releaseSlot`).
 
 `slotID` is maintained as a "slot → browser id" reverse map but is **never
@@ -91,7 +91,7 @@ that must be kept consistent for no benefit.
 just clears `d.slots[slot]`.
 
 ### B2. `video.Streamer.encoderOpened` and `filterBuilt` are unused
-**File:** `video/video.go` (lines ~74-76).
+**File:** `video/video_linux.go` (lines ~74-76).
 
 Both fields are declared with a comment saying they "avoid re-logging
 one-time setup each frame", but nothing ever reads or writes them
@@ -101,14 +101,14 @@ instead). Dead fields.
 **Fix:** delete both fields and their doc comment.
 
 ### B3. `framesWritten` carries a misleading `//nolint:unused`
-**File:** `video/video.go` (~line 72).
+**File:** `video/video_linux.go` (~line 72).
 
 The field *is* used (`atomic.AddUint64` / `atomic.LoadUint64`), so the
 `nolint:unused` directive is wrong and will mask future real
 unused-field warnings. Remove the directive.
 
 ### B4. Legacy `touch*` event branches are unreachable
-**Files:** `trackpad/trackpad.go` and `tablet/tablet.go`
+**Files:** `trackpad/trackpad_linux.go` and `tablet/tablet_linux.go`
 (`ProcessEvent` type switches).
 
 Both devices accept `touchstart`, `touchmove`, `touchend`, `touchcancel`,
@@ -123,7 +123,7 @@ in the `input` package — see B5 — instead of duplicating the table in
 both devices).
 
 ### B5. Duplicated pointer-event → action mapping
-**Files:** `trackpad/trackpad.go`, `tablet/tablet.go`.
+**Files:** `trackpad/trackpad_linux.go`, `tablet/tablet_linux.go`.
 
 Both devices independently translate `ev.Type` → `"down"|"move"|"up"|"button"`
 with the same logic. This is a DRY violation and the two copies have
@@ -148,7 +148,7 @@ func Action(t string) string {
 Then each device does `switch input.Action(ev.Type)` once.
 
 ### B6. `Norm` + `DenormBi` round-trip is an unnecessary indirection
-**File:** `input/event.go`, used only by `trackpad/trackpad.go`.
+**File:** `input/event.go`, used only by `trackpad/trackpad_linux.go`.
 
 The trackpad stores `slot.X = input.Norm(t.X)` (maps `[0,1]→[-1,1]`),
 then emits `input.DenormBi(primary.X, 0, axisMax)` (maps `[-1,1]→[0,axisMax]`).
@@ -215,7 +215,7 @@ fallback policy independently readable/testable.
 ## D. Readability / idiomatic Go
 
 ### D1. Awkward frame-duration computation
-**File:** `video/video.go`, `captureLoop`:
+**File:** `video/video_linux.go`, `captureLoop`:
 
 ```go
 frameDuration := time.Duration(float64(time.Second) * float64(1) / float64(s.cfg.FrameRate))
@@ -230,7 +230,7 @@ frameDuration := time.Second / time.Duration(s.cfg.FrameRate)
 Integer division of `time.Duration` is exact here and far clearer.
 
 ### D2. Deeply nested capture/encode loop
-**File:** `video/video.go`, `captureLoop`.
+**File:** `video/video_linux.go`, `captureLoop`.
 
 Four levels of nesting (read → send packet → receive frame → filter →
 receive packet) with `continue`/`break` scattered through. Each stage
@@ -261,7 +261,7 @@ return strings.Contains(sdp, "\nm=video")
 with it — it cannot, SDP starts with `v=`, so `\n` is safe.)
 
 ### D4. `boolToInt` is reinvented
-**File:** `tablet/tablet.go`.
+**File:** `tablet/tablet_linux.go`.
 
 Trivial, but Go has no built-in. Either keep it as a tiny package-level
 helper (it already is) or inline a small `map[bool]int32`-free expression.
@@ -340,7 +340,7 @@ defer unless you're already touching this code.
 
 ## F. Minor / nits
 
-- **`video.Streamer.Stop` double-close logic** (`video/video.go`): the
+- **`video.Streamer.Stop` double-close logic** (`video/video_linux.go`): the
   `select { case <-s.stop: return; default: close(s.stop) }` is correct
   but a comment that the second call is a no-op would help; alternatively
   `sync.Once` makes the intent unambiguous:
