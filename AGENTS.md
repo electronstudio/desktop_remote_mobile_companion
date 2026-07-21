@@ -110,6 +110,25 @@ sudo udevadm trigger
 
 Make sure your user is in the `input` group (`usermod -aG input $USER`).
 
+## Desktop video capture permissions (CAP_SYS_ADMIN)
+
+The `kmsgrab` DRM demuxer used by the video pipeline requires `CAP_SYS_ADMIN` to acquire DRM master and map the framebuffer. Without it every phone connection fails with a cryptic FFmpeg error:
+
+```
+[kmsgrab @ 0x...] No handle set on framebuffer: maybe you need some additional capabilities?
+video: open kmsgrab /dev/dri/cardN: Invalid argument
+```
+
+At startup, when video is enabled (the default, i.e. not `--no-video`), the server checks the process effective capability set (bit 21 of `CapEff` from `/proc/self/status`). If `CAP_SYS_ADMIN` is missing it logs a clear warning with the fix and auto-disables video for that run; trackpad/tablet keep working and the per-connection FFmpeg error is never printed.
+
+To grant the capability to the binary once (no need to run as root afterwards):
+
+```bash
+sudo setcap cap_sys_admin+ep ./desktop_remote_mobile_companion
+```
+
+`setcap` is stored as a file extended attribute, so it must be re-applied after every rebuild (the file is replaced). Alternatively run with `--no-video` to use only the trackpad/tablet. Running the binary as root also works but is not recommended.
+
 ## Tablet axis resolution
 
 The virtual graphics tablet advertises `ABS_X`/`ABS_Y` resolution of 200 units/mm. libinput rejects tablets with zero resolution ("missing tablet capabilities: resolution") and ignores the device for the whole session, so the resolution must be visible to libinput at probe time.

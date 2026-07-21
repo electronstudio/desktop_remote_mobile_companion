@@ -40,6 +40,11 @@ var staticFS embed.FS
 //go:embed VERSION
 var version string
 
+// videoEnabled is the startup decision about whether to attempt desktop
+// video streaming for this run. It is computed in main from --no-video and
+// the CAP_SYS_ADMIN check, and read by signalHandler.
+var videoEnabled bool
+
 var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool { return true },
 }
@@ -68,6 +73,13 @@ func main() {
 	arg.MustParse(&cli)
 	listenAddr := fmt.Sprintf(":%d", cli.Port)
 	versionStr := strings.TrimSpace(version)
+
+	// videoEnabled is the effective decision about whether desktop video
+	// streaming will be attempted. It starts as the user's --no-video choice
+	// and may be cleared at startup if the process lacks CAP_SYS_ADMIN, which
+	// kmsgrab needs to acquire DRM master and map the framebuffer. Keeping it
+	// as a package var lets signalHandler avoid re-running the check.
+	videoEnabled = !cli.NoVideo
 
 	log.Printf("Desktop Remote Mobile Companion v%s", versionStr)
 
@@ -121,6 +133,21 @@ func main() {
 	})
 
 	if !cli.NoVideo {
+		// kmsgrab requires CAP_SYS_ADMIN. Without it every phone connection
+		// would fail with a cryptic "No handle set on framebuffer" / EINVAL
+		// error from FFmpeg. Detect that once up front, tell the user how to
+		// fix it, and silently disable video for this run so trackpad/tablet
+		// keep working without per-connection noise.
+		if ok, err := hasCapSysAdmin(); err != nil {
+			log.Printf("warning: could not check CAP_SYS_ADMIN (%v); desktop video may fail", err)
+		} else if !ok {
+			log.Printf("warning: desktop video streaming disabled for this run: the process lacks CAP_SYS_ADMIN, which kmsgrab needs to capture the framebuffer.")
+			log.Print(videoMissingCapInstructions)
+			videoEnabled = false
+		}
+	}
+
+	if videoEnabled {
 		log.Printf("desktop video streaming enabled (VAAPI/kmsgrab)")
 		if cli.VideoCard != "" {
 			log.Printf("  capture card: %s", cli.VideoCard)
@@ -128,8 +155,10 @@ func main() {
 			log.Printf("  capture card: auto-detect")
 		}
 		log.Printf("  fps=%d qp=%d low-power=%d", cli.VideoFps, cli.VideoQP, cli.LowPower)
-	} else {
+	} else if cli.NoVideo {
 		log.Printf("desktop video streaming disabled (--no-video)")
+	} else {
+		log.Printf("desktop video streaming disabled (missing CAP_SYS_ADMIN)")
 	}
 
 	log.Printf("HTTPS listening on https://localhost%s", listenAddr)
@@ -271,7 +300,7 @@ func signalHandler(w http.ResponseWriter, r *http.Request, pad *trackpad.Device,
 			// capture pipeline and add its track before answering. Failure
 			// is non-fatal: we answer without a video track and the client
 			// keeps using trackpad/tablet.
-			if !cli.NoVideo && hasVideoMedia(msg.SDP) && videoStreamer == nil {
+			if videoEnabled && hasVideoMedia(msg.SDP) && videoStreamer == nil {
 				vs, err := video.New(video.Config{
 					CardPath:  cli.VideoCard,
 					MaxWidth:  cli.VideoWidth,
@@ -281,6 +310,7 @@ func signalHandler(w http.ResponseWriter, r *http.Request, pad *trackpad.Device,
 				})
 				if err != nil {
 					log.Printf("video unavailable for %s: %v", r.RemoteAddr, err)
+					log.Printf("  if you do not need desktop video, run with --no-video to suppress this; if you do, make sure CAP_SYS_ADMIN is granted and a VAAPI-capable GPU is present")
 				} else {
 					if _, err := pc.AddTrack(vs.Track); err != nil {
 						log.Printf("add video track failed for %s: %v", r.RemoteAddr, err)

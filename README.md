@@ -55,10 +55,14 @@ Needs uinput group permissions.  Enter this command then reboot:
 
     sudo usermod -aG uinput $USER
 
+To enable desktop video capture, grant CAP_SYS_ADMIN to the binary once (no need to run as root afterwards):
+
+    sudo setcap cap_sys_admin+ep desktop_remote_mobile_companion
+
 ## Run
 
 ```bash
-./desktop_remote_movile_companion --port 8080
+./desktop_remote_mobile_companion --port 8080
 ```
 
 Video streaming flags:
