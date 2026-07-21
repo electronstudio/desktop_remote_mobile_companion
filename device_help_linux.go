@@ -1,5 +1,3 @@
-//go:build linux
-
 package main
 
 const uinputInstructions = `uinput access denied. To fix permissions, run:
