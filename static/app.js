@@ -562,10 +562,26 @@
   document.querySelectorAll('.area').forEach(initArea);
   connect();
 
+  // We no longer register a service worker. A SW intercepted top-level
+  // navigation, which prevented iOS Safari from showing the "accept
+  // self-signed certificate" interstitial when the server certificate
+  // changed — leaving the phone unable to load the page or re-trust the
+  // new cert. See static/sw.js for the full rationale.
+  //
+  // Remove any SW + caches left by older versions so they can never
+  // intercept navigation again.
   if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('/sw.js')
-      .then(reg => console.log('Service worker registered', reg.scope))
-      .catch(err => console.error('Service worker registration failed', err));
+    navigator.serviceWorker.getRegistrations()
+      .then(regs => regs.forEach(r => {
+        r.unregister().then(ok => console.log('Unregistered stale service worker', r.scope, ok));
+      }))
+      .catch(err => console.error('Service worker cleanup failed', err));
+    if (window.caches && typeof caches.keys === 'function') {
+      caches.keys().then(keys => keys.forEach(k => caches.delete(k)));
+    }
+    navigator.serviceWorker.addEventListener('message', ev => {
+      if (ev.data === 'reload') location.reload();
+    });
   }
 
   const splitter = document.querySelector('.splitter');

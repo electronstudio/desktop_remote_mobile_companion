@@ -1,57 +1,35 @@
-const CACHE_NAME = 'desktop-remote-v2';
-const STATIC_ASSETS = [
-  '/manifest.json',
-  '/icon-192.png',
-  '/icon-512.png',
-  '/apple-touch-icon.png'
-];
-
-function isNavigationRequest(request) {
-  return request.mode === 'navigate' || new URL(request.url).pathname === '/';
-}
-
-function isAppScript(request) {
-  return new URL(request.url).pathname === '/app.js';
-}
-
+// This file exists only to remove service workers installed by older
+// versions of the app. The app no longer registers a service worker.
+//
+// Why: a service worker intercepted top-level navigation requests, which
+// prevented iOS Safari from showing its "accept self-signed certificate"
+// interstitial when the server's certificate changed (e.g. a regenerated
+// cert after the app is run by a different user). With the old cert no
+// longer trusted and the SW returning a null response, the phone was
+// unable to load the page *or* reach the screen that would let it trust
+// the new certificate.
+//
+// When the browser fetches this file to update an existing registration,
+// it unregisters itself and clears any caches, then reloads clients so
+// they are no longer controlled by a service worker.
 self.addEventListener('install', event => {
   event.waitUntil(
-    caches.open(CACHE_NAME)
-      .then(cache => cache.addAll(STATIC_ASSETS))
-      .then(() => self.skipWaiting())
+    self.registration.unregister().then(() => self.skipWaiting())
   );
 });
 
 self.addEventListener('activate', event => {
   event.waitUntil(
     caches.keys()
-      .then(keys => Promise.all(
-        keys.filter(key => key !== CACHE_NAME).map(key => caches.delete(key))
-      ))
+      .then(keys => Promise.all(keys.map(k => caches.delete(k))))
       .then(() => self.clients.claim())
+      .then(() => self.clients.matchAll({ type: 'window' }))
+      .then(clients => clients.forEach(c => {
+        try { c.postMessage('reload'); } catch (e) { /* ignore */ }
+      }))
   );
 });
 
-self.addEventListener('fetch', event => {
-  if (event.request.method !== 'GET') return;
-
-  if (isNavigationRequest(event.request) || isAppScript(event.request)) {
-    event.respondWith(
-      fetch(event.request)
-        .then(networkResponse => {
-          if (networkResponse && networkResponse.status === 200) {
-            const clone = networkResponse.clone();
-            caches.open(CACHE_NAME).then(cache => cache.put(event.request, clone));
-          }
-          return networkResponse;
-        })
-        .catch(() => {
-          return caches.match(event.request, { ignoreSearch: true }).then(response => response);
-        })
-    );
-  } else {
-    event.respondWith(
-      caches.match(event.request).then(response => response || fetch(event.request))
-    );
-  }
-});
+// Never intercept requests: let the browser handle them so that the
+// normal certificate-acceptance interstitial can appear.
+self.addEventListener('fetch', () => { /* pass-through */ });

@@ -339,8 +339,16 @@ func loadOrGenerateCert(certFile, keyFile string) (tls.Certificate, string, erro
 				return tls.Certificate{}, "", err
 			}
 			fp, err := certFingerprint(certFile)
+			if err == nil {
+				log.Printf("certificate: loaded existing cert from %s (fingerprint %s)", certFile, fp)
+			} else {
+				log.Printf("certificate: loaded existing cert from %s (fingerprint unavailable: %v)", certFile, err)
+			}
 			return cert, fp, err
 		}
+		log.Printf("certificate: generating new self-signed cert (key file missing, cannot reuse %s)", certFile)
+	} else {
+		log.Printf("certificate: generating new self-signed cert (no existing cert found at %s)", certFile)
 	}
 
 	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
