@@ -69,7 +69,7 @@ type Streamer struct {
 	// framesWritten counts H264 samples pushed to the track, for periodic
 	// stats logging. Read/written atomically so it is safe from the capture
 	// goroutine.
-	framesWritten uint64 //nolint:unused // used for stats logging
+	framesWritten uint64 // used for stats logging
 
 	// encoderOpened / filterBuilt avoid re-logging one-time setup each frame.
 	encoderOpened bool

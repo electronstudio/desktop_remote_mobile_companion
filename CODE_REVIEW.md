@@ -8,35 +8,6 @@ Line numbers refer to the current tree.
 
 ## A. Bugs / correctness
 
-### A1. Lost error in `loadOrGenerateCert` (shadowed `err`)
-**File:** `main.go` `loadOrGenerateCert`, final lines of the generate branch.
-
-```go
-cert, err := tls.X509KeyPair(
-    pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER}),
-    pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}),
-)
-fp, err := certFingerprint(certFile) // <-- reuses `err`; overwrites X509KeyPair error
-return cert, fp, err
-```
-
-If `tls.X509KeyPair` fails, `err` is immediately overwritten by
-`certFingerprint` (which succeeds, because the file was just written),
-so `main` receives a **zero `tls.Certificate` and a nil error**, then
-starts a TLS server that will fail at handshake time with a confusing
-message instead of a clear startup error.
-
-**Fix:** check the X509KeyPair error before computing the fingerprint,
-or rename the second variable:
-
-```go
-cert, err := tls.X509KeyPair(certPEM, keyPEM)
-if err != nil {
-    return tls.Certificate{}, "", fmt.Errorf("parse generated keypair: %w", err)
-}
-fp, err := certFingerprint(certFile)
-return cert, fp, err
-```
 
 ### A2. Unclamped tablet coordinates can leave the axis range
 **File:** `tablet/tablet_linux.go` `ProcessEvent` (down/move branches):
@@ -60,19 +31,7 @@ d.x = input.DenormUni(float32(t.X), 0, axisMax)
 d.y = input.DenormUni(float32(t.Y), 0, axisMax)
 ```
 
-### A3. Ignored write/close errors when persisting the generated cert
-**File:** `main.go` `loadOrGenerateCert`.
 
-`pem.Encode(certOut, …)`, `certOut.Close()`, `keyOut.Close()` and
-`x509.MarshalECPrivateKey` errors are all discarded. A failed key write
-(for full disk, read-only cache dir, etc.) would silently leave a cert
-with no usable key file, and the next run would log "key file missing"
-and regenerate forever.
-
-**Fix:** wrap in a small helper that encodes, closes, and checks errors,
-or use `os.WriteFile` + `pem.EncodeToMemory`.
-
----
 
 ## B. Dead code & redundant abstractions
 
@@ -100,12 +59,7 @@ instead). Dead fields.
 
 **Fix:** delete both fields and their doc comment.
 
-### B3. `framesWritten` carries a misleading `//nolint:unused`
-**File:** `video/video_linux.go` (~line 72).
 
-The field *is* used (`atomic.AddUint64` / `atomic.LoadUint64`), so the
-`nolint:unused` directive is wrong and will mask future real
-unused-field warnings. Remove the directive.
 
 ### B4. Legacy `touch*` event branches are unreachable
 **Files:** `trackpad/trackpad_linux.go` and `tablet/tablet_linux.go`
@@ -214,20 +168,6 @@ fallback policy independently readable/testable.
 
 ## D. Readability / idiomatic Go
 
-### D1. Awkward frame-duration computation
-**File:** `video/video_linux.go`, `captureLoop`:
-
-```go
-frameDuration := time.Duration(float64(time.Second) * float64(1) / float64(s.cfg.FrameRate))
-```
-
-**Fix:**
-
-```go
-frameDuration := time.Second / time.Duration(s.cfg.FrameRate)
-```
-
-Integer division of `time.Duration` is exact here and far clearer.
 
 ### D2. Deeply nested capture/encode loop
 **File:** `video/video_linux.go`, `captureLoop`.
@@ -243,40 +183,6 @@ cleanup:
 write" with a flat structure, and the `Unref` discipline lives next to
 the allocation it balances.
 
-### D3. `hasVideoMedia` is too lax
-**File:** `main.go`:
-
-```go
-func hasVideoMedia(sdp string) bool { return strings.Contains(sdp, "m=video") }
-```
-
-`m=video` only ever appears at the start of an SDP line, but
-`strings.Contains` would also match the substring inside an attribute
-value. Not a current bug, but cheap to make precise:
-
-```go
-return strings.Contains(sdp, "\nm=video")
-```
-(Then also handle a leading `m=video` at offset 0 if an SDP could start
-with it — it cannot, SDP starts with `v=`, so `\n` is safe.)
-
-### D4. `boolToInt` is reinvented
-**File:** `tablet/tablet_linux.go`.
-
-Trivial, but Go has no built-in. Either keep it as a tiny package-level
-helper (it already is) or inline a small `map[bool]int32`-free expression.
-Not worth changing on its own; mentioned only so it isn't re-added
-elsewhere. If you adopt B5's `input.Action`, you could also expose a
-shared `input.BoolToInt` to avoid a second copy appearing.
-
-### D5. `localIPs()` called twice and may emit duplicate SANs
-**File:** `main.go`.
-
-`localIPs()` is invoked once while building the certificate template and
-once for the QR-code logging. It also appends *every* non-loopback
-address, so an interface with two IPv4s yields duplicate-looking entries
-(not a cert problem, but noisy logs). Cache the result in `main` and pass
-it to both `loadOrGenerateCert` and the logging loop.
 
 ---
 

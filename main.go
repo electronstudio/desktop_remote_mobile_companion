@@ -432,8 +432,15 @@ func loadOrGenerateCert(certFile, keyFile string) (tls.Certificate, string, erro
 	if err != nil {
 		return tls.Certificate{}, "", err
 	}
-	pem.Encode(certOut, &pem.Block{Type: "CERTIFICATE", Bytes: certDER})
-	certOut.Close()
+
+	err = pem.Encode(certOut, &pem.Block{Type: "CERTIFICATE", Bytes: certDER})
+	if err != nil {
+		return tls.Certificate{}, "", err
+	}
+	err = certOut.Close()
+	if err != nil {
+		return tls.Certificate{}, "", err
+	}
 
 	keyOut, err := os.OpenFile(keyFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
@@ -443,13 +450,22 @@ func loadOrGenerateCert(certFile, keyFile string) (tls.Certificate, string, erro
 	if err != nil {
 		return tls.Certificate{}, "", err
 	}
-	pem.Encode(keyOut, &pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
-	keyOut.Close()
+	err = pem.Encode(keyOut, &pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
+	if err != nil {
+		return tls.Certificate{}, "", err
+	}
+	err = keyOut.Close()
+	if err != nil {
+		return tls.Certificate{}, "", err
+	}
 
-	cert, err := tls.X509KeyPair(
-		pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER}),
-		pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}),
-	)
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
+
+	cert, err := tls.X509KeyPair(certPEM, keyPEM)
+	if err != nil {
+		return tls.Certificate{}, "", fmt.Errorf("parse generated keypair: %w", err)
+	}
 	fp, err := certFingerprint(certFile)
 	return cert, fp, err
 }
