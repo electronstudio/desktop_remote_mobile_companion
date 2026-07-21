@@ -176,7 +176,7 @@ func main() {
 	log.Printf(" certificate stored in %s", certDir)
 	log.Printf(" certificate SHA-256 fingerprint: %s", fingerprint)
 
-	for _, ip := range localIPs() {
+	for _, ip := range localIPs(true) {
 		s := fmt.Sprintf("https://%s:%d", ip, cli.Port)
 		log.Printf(" also reachable at %s", s)
 
@@ -416,7 +416,7 @@ func loadOrGenerateCert(certFile, keyFile string) (tls.Certificate, string, erro
 		IPAddresses:           []net.IP{net.ParseIP("127.0.0.1"), net.ParseIP("::1")},
 	}
 
-	for _, ip := range localIPs() {
+	for _, ip := range localIPs(false) {
 		parsed := net.ParseIP(ip)
 		if parsed != nil {
 			template.IPAddresses = append(template.IPAddresses, parsed)
@@ -478,7 +478,7 @@ func hasVideoMedia(sdp string) bool {
 	return strings.Contains(sdp, "m=video")
 }
 
-func localIPs() []string {
+func localIPs(add_brackets_ipv6 bool) []string {
 	var out []string
 	ifaces, err := net.Interfaces()
 	if err != nil {
@@ -495,8 +495,8 @@ func localIPs() []string {
 		for _, addr := range addrs {
 			if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
 				s := ipnet.IP.String()
-				if ipnet.IP.To4() == nil {
-					if !strings.HasPrefix(s, "fe80") {
+				if ipnet.IP.To4() == nil && add_brackets_ipv6 { // if ipv6
+					if !strings.HasPrefix(s, "fe80") { // ignore link local
 						out = append(out, "["+s+"]")
 					}
 				} else {
