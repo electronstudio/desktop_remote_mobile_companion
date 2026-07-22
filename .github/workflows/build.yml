@@ -105,7 +105,6 @@ jobs:
     runs-on: windows-2022
 
     env:
-      FFMPEG_PREFIX: /c/ffmpeg
       CGO_ENABLED: "1"
 
     steps:
@@ -131,8 +130,39 @@ jobs:
         id: cache-ffmpeg
         uses: actions/cache@v4
         with:
-          path: C:\ffmpeg
+          path: ${{ github.workspace }}/ffmpeg
           key: ffmpeg-${{ env.FFMPEG_VERSION }}-windows-msys2-mingw64-${{ hashFiles('.github/workflows/build.yml') }}
+
+      - name: Set FFmpeg prefix
+        shell: msys2 {0}
+        run: |
+          echo "FFMPEG_PREFIX=$(cygpath -u "$GITHUB_WORKSPACE")/ffmpeg" >> "$GITHUB_ENV"
+          echo "FFMPEG_TARBALL=$(cygpath -u "$GITHUB_WORKSPACE")/ffmpeg-${FFMPEG_VERSION}.tar.xz" >> "$GITHUB_ENV"
+
+      # Download outside MSYS2. curl inside the MSYS2/mingw environment
+      # intermittently fails the TLS handshake to ffmpeg.org's CDN with
+      # "curl: (35) Recv failure: Connection reset by peer", while the
+      # native Windows curl (Schannel) / Invoke-WebRequest works reliably.
+      - name: Download FFmpeg source
+        if: steps.cache-ffmpeg.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          $url = "https://ffmpeg.org/releases/ffmpeg-${env:FFMPEG_VERSION}.tar.xz"
+          $out = Join-Path $env:GITHUB_WORKSPACE "ffmpeg-${env:FFMPEG_VERSION}.tar.xz"
+          $ok = $false
+          for ($i = 1; $i -le 5; $i++) {
+            Write-Host "Attempt $i downloading $url"
+            try {
+              & curl.exe -L --fail --retry 3 --retry-all-errors --retry-delay 3 `
+                --connect-timeout 30 -o $out $url
+              if ($LASTEXITCODE -eq 0 -and (Test-Path $out)) { $ok = $true; break }
+            } catch {
+              Write-Host "Exception: $_"
+            }
+            Start-Sleep -Seconds 5
+          }
+          if (-not $ok) { throw "Failed to download FFmpeg source after 5 attempts" }
+          Write-Host "Downloaded $((Get-Item $out).Length) bytes to $out"
 
       - name: Build FFmpeg from source
         if: steps.cache-ffmpeg.outputs.cache-hit != 'true'
@@ -140,8 +170,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p /tmp
-          curl -L -o /tmp/ffmpeg.tar.xz "https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz"
-          tar -C /tmp -xJf /tmp/ffmpeg.tar.xz
+          tar -C /tmp -xJf "${FFMPEG_TARBALL}"
           cd "/tmp/ffmpeg-${FFMPEG_VERSION}"
 
           # Work around Windows command-line length limits when archiving
@@ -183,25 +212,26 @@ jobs:
       - name: Set Windows build environment
         shell: msys2 {0}
         run: |
-          echo "CGO_CFLAGS=-I/c/ffmpeg/include" >> $GITHUB_ENV
-          echo "CGO_LDFLAGS=-L/c/ffmpeg/lib -lntdll -lsetupapi" >> $GITHUB_ENV
+          echo "CGO_CFLAGS=-I$FFMPEG_PREFIX/include" >> $GITHUB_ENV
+          echo "CGO_LDFLAGS=-L$FFMPEG_PREFIX/lib -lntdll -lsetupapi" >> $GITHUB_ENV
+          echo "PKG_CONFIG_PATH=$FFMPEG_PREFIX/lib/pkgconfig" >> $GITHUB_ENV
           echo "PKG_CONFIG=pkg-config --static" >> $GITHUB_ENV
 
       - name: Verify FFmpeg pkg-config files
         shell: msys2 {0}
         run: |
-          export PKG_CONFIG_PATH="/c/ffmpeg/lib/pkgconfig"
+          export PKG_CONFIG_PATH="$FFMPEG_PREFIX/lib/pkgconfig"
           echo "PKG_CONFIG_PATH=$PKG_CONFIG_PATH"
           which pkg-config
           pkg-config --version
-          ls -la /c/ffmpeg/lib/pkgconfig/ || true
+          ls -la "$FFMPEG_PREFIX/lib/pkgconfig/" || true
           pkg-config --list-all | grep -i '^libav' || true
           pkg-config --cflags libavcodec || true
 
       - name: Build
         shell: msys2 {0}
         run: |
-          export PKG_CONFIG_PATH="/c/ffmpeg/lib/pkgconfig"
+          export PKG_CONFIG_PATH="$FFMPEG_PREFIX/lib/pkgconfig"
           go build -ldflags "-linkmode external" -o companion.exe
 
       - name: Stage artifact

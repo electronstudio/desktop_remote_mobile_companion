@@ -1,4 +1,4 @@
-# Desktop Remote Mobile Companion
+# Inara: the Desktop Remote Mobile Companion
 
 [![AI-DECLARATION: pair](https://img.shields.io/badge/䷼%20AI--DECLARATION-pair-ffedd5?labelColor=ffedd5)](https://ai-declaration.md)
 
@@ -19,23 +19,23 @@ Designed for Linux Wayland.  Linux X11 may work.
 ## Compared to Weylus
 
 [Weylus](https://github.com/electronstudio/WeylusCommunityEdition) is a program for graphic tablet
-and display mirroring.  DRMC explores some _different_ methods of implementing those features,
+and display mirroring.  Inara explores some _different_ methods of implementing those features,
 which may not necessarily be better!
 
-DRMC uses WebRTC connections. The underlying protocol is UDP rather than TCP which _may_ (or may not)
+Inara uses WebRTC connections. The underlying protocol is UDP rather than TCP which _may_ (or may not)
 have lower latency.
 
-DRMC mirrors the display using ffmpeg's kmsgrab, which _may_ (or may not) work better on Wayland (although doesn't
+Inara mirrors the display using ffmpeg's kmsgrab, which _may_ (or may not) work better on Wayland (although doesn't
 work at all on Nvidia systems).
 
-DRMC uses hardware accelerated VAAPI encoding.
+Inara uses hardware accelerated VAAPI encoding.
 
-DRMC is written in Go rather than Rust.
+Inara is written in Go rather than Rust.
 
 
 ## Install
 
-From releases.
+From [releases](releases).
 
 Needs uinput group permissions.  Enter this command then reboot:
 
@@ -44,6 +44,12 @@ Needs uinput group permissions.  Enter this command then reboot:
 To enable desktop video capture, grant CAP_SYS_ADMIN to the binary once (no need to run as root afterwards):
 
     sudo setcap cap_sys_admin+ep companion
+
+On Intel GPU systems the full drivers are required, install on Debian with:
+
+    sudo apt install intel-media-va-driver-non-free
+
+Also on Intel the `--low-power 1` option may improve latency.
 
 ## Run
 
