@@ -203,3 +203,34 @@ func (d *Device) releaseSlot(slot int) {
 		d.slotID[slot] = -1
 	}
 }
+
+// Reset releases all active contacts and leaves the trackpad idle, as if every
+// finger had been lifted. It is intended to be called when a client
+// disconnects so a subsequent client (or reconnect) does not inherit stuck
+// contacts from a stroke whose pointerup was lost (e.g. a dropped data
+// channel or a client that backgrounded the page mid-gesture).
+func (d *Device) Reset() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if len(d.active) == 0 && !d.touching {
+		return
+	}
+	for id, slot := range d.active {
+		slot.Pressure = 0
+		d.active[id] = slot
+	}
+	if d.touching {
+		d.tp.Send(uint16(linux.EV_KEY), uint16(linux.BTN_TOUCH), 0)
+		d.touching = false
+	}
+	slots := make([]touchpad.TouchSlot, 0, len(d.active))
+	for _, s := range d.active {
+		slots = append(slots, s)
+	}
+	sort.Slice(slots, func(i, j int) bool { return slots[i].Slot < slots[j].Slot })
+	d.tp.MultiTouch(slots)
+	for id := range d.active {
+		d.releaseSlot(d.active[id].Slot)
+		delete(d.active, id)
+	}
+}

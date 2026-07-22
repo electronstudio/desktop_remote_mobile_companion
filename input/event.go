@@ -3,10 +3,20 @@
 package input
 
 // Touch is a single changed touch from the browser.
+//
+// Pressure, TiltX and TiltY are optional pen/stylus attributes sourced
+// from the browser PointerEvent. They are sent only for the tablet device
+// and only when the browser actually reports them (pointers backed by a
+// finger report a synthetic pressure of 0.5 and tilt of 0). Pointer (rather
+// than value) types are used so "absent" is distinguishable from a real zero,
+// which matters for pressure: 0 means "pen hovering, no contact".
 type Touch struct {
-	ID int     `json:"id"`
-	X  float64 `json:"x"`
-	Y  float64 `json:"y"`
+	ID       int      `json:"id"`
+	X        float64  `json:"x"`
+	Y        float64  `json:"y"`
+	Pressure *float64 `json:"p,omitempty"`  // 0..1
+	TiltX    *int     `json:"tx,omitempty"` // degrees, -90..90
+	TiltY    *int     `json:"ty,omitempty"` // degrees, -90..90
 }
 
 // Event is the JSON payload sent over the WebRTC data channel.

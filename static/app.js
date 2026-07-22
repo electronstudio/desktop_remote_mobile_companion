@@ -37,15 +37,22 @@
   function sendPointerSample(type, e, device, surface) {
     if (!conn.channel || conn.channel.readyState !== 'open') return;
     const rect = surface.getBoundingClientRect();
-    const payload = {
-      device,
-      type,
-      t: [{
-        id: e.pointerId,
-        x: (e.clientX - rect.left) / rect.width,
-        y: (e.clientY - rect.top) / rect.height
-      }]
+    const sample = {
+      id: e.pointerId,
+      x: (e.clientX - rect.left) / rect.width,
+      y: (e.clientY - rect.top) / rect.height
     };
+    // Pen/stylus attributes are only relevant for the tablet. The browser
+    // exposes pressure (0..1), tiltX/tiltY (degrees, -90..90) on PointerEvent;
+    // for a touch pointer pressure is a synthetic 0.5 and tilt is 0. We forward
+    // whatever the browser reports so a real pressure-sensitive stylus drives
+    // the virtual tablet; the server treats absent values as defaults.
+    if (device === 'tablet') {
+      if (e.pressure !== undefined) sample.p = e.pressure;
+      if (e.tiltX !== undefined) sample.tx = e.tiltX;
+      if (e.tiltY !== undefined) sample.ty = e.tiltY;
+    }
+    const payload = { device, type, t: [sample] };
     try {
       conn.channel.send(JSON.stringify(payload));
     } catch (err) {
@@ -248,8 +255,20 @@
     if (!surface) return;
     const device = panelId;
 
+    // Log lifecycle pointer events (not pointermove) to the log panel so we
+    // can see exactly which events the browser fires for each touch — useful
+    // for diagnosing lost/merged strokes when touches happen in rapid
+    // succession.
+    const logPointer = (label, e) => {
+      const rect = surface.getBoundingClientRect();
+      const x = ((e.clientX - rect.left) / rect.width).toFixed(3);
+      const y = ((e.clientY - rect.top) / rect.height).toFixed(3);
+      log(`${device} ${label} id=${e.pointerId} pt=${e.pointerType} x=${x} y=${y}`);
+    };
+
     surface.addEventListener('pointerdown', e => {
       e.preventDefault();
+      logPointer('pointerdown', e);
       if (areaObj.state.settling) return;
       areaObj.state.activePointers.set(e.pointerId, { surface, device });
       surface.setPointerCapture(e.pointerId);
@@ -261,13 +280,26 @@
       if (areaObj.state.settling) return;
       const info = areaObj.state.activePointers.get(e.pointerId);
       if (!info) return;
-      const events = e.getCoalescedEvents ? e.getCoalescedEvents() : [];
-      const last = events.length > 0 ? events[events.length - 1] : e;
-      sendPointerSample('pointermove', last, info.device, info.surface);
+      // For the trackpad we send the latest coalesced sample for smoother
+      // high-frequency cursor motion. For the tablet we send the main event
+      // instead: coalesced PointerEvents from getCoalescedEvents() report
+      // pressure/tilt as 0 on some platforms (the pen attributes are only
+      // reliably present on the dispatched event e), which made the pen's
+      // pressure collapse to 0 immediately after pointerdown and lifted the
+      // tip mid-stroke. Position fidelity from the main event is fine for the
+      // tablet's absolute coordinates.
+      if (info.device === 'tablet') {
+        sendPointerSample('pointermove', e, info.device, info.surface);
+      } else {
+        const events = e.getCoalescedEvents ? e.getCoalescedEvents() : [];
+        const last = events.length > 0 ? events[events.length - 1] : e;
+        sendPointerSample('pointermove', last, info.device, info.surface);
+      }
     }, { passive: false });
 
     const endPointer = e => {
       e.preventDefault();
+      logPointer(e.type === 'pointercancel' ? 'pointercancel' : 'pointerup', e);
       const info = areaObj.state.activePointers.get(e.pointerId);
       if (!info) return;
       areaObj.state.activePointers.delete(e.pointerId);
@@ -276,14 +308,25 @@
       }
       const type = e.type === 'pointercancel' ? 'pointercancel' : 'pointerup';
       sendPointerSample(type, e, info.device, info.surface);
-      if (e.type === 'pointercancel') {
-        log('pointercancel', 'err');
-      }
     };
 
     surface.addEventListener('pointerup', endPointer, { passive: false });
     surface.addEventListener('pointercancel', endPointer, { passive: false });
+    surface.addEventListener('pointerenter', e => logPointer('pointerenter', e), { passive: false });
+    surface.addEventListener('pointerleave', e => logPointer('pointerleave', e), { passive: false });
     surface.addEventListener('contextmenu', e => e.preventDefault());
+
+    // Prevent the browser from interpreting rapid touches as touch gestures
+    // (double-tap zoom, long-press, etc.). On some browsers a fast second
+    // touch is swallowed as a double-tap and never fires a pointerdown, so a
+    // rapid double-touch (e.g. two quick pen taps) would lose the second
+    // stroke entirely. Cancelling the underlying touch events stops that
+    // gesture detection and lets every touch through as a pointer event.
+    // (passive:false so preventDefault is honoured.)
+    surface.addEventListener('touchstart', e => e.preventDefault(), { passive: false });
+    surface.addEventListener('touchmove', e => e.preventDefault(), { passive: false });
+    surface.addEventListener('touchend', e => e.preventDefault(), { passive: false });
+    surface.addEventListener('touchcancel', e => e.preventDefault(), { passive: false });
   }
 
   function attachButtonListeners(tabletPanel) {

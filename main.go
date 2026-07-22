@@ -29,10 +29,10 @@ import (
 	"github.com/electronstudio/desktop_remote_mobile_companion/tablet"
 	"github.com/electronstudio/desktop_remote_mobile_companion/trackpad"
 	"github.com/electronstudio/desktop_remote_mobile_companion/video"
+	"github.com/gen2brain/beeep"
 	"github.com/gorilla/websocket"
 	"github.com/mdp/qrterminal/v3"
 	"github.com/pion/webrtc/v4"
-	"github.com/gen2brain/beeep"
 )
 
 //go:embed static/*
@@ -95,7 +95,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("certificate setup failed: %v", err)
 	}
-	beeep.Alert("Testing","test",nil)
+	beeep.Alert("Testing", "test", nil)
 	pad, err := trackpad.New()
 	if err != nil {
 		beeep.Alert("failed to register virtual trackpad", uinputInstructions, nil)
@@ -143,7 +143,7 @@ func main() {
 		if ok, err := hasCapSysAdmin(); err != nil {
 			log.Printf("warning: could not check CAP_SYS_ADMIN (%v); desktop video may fail", err)
 		} else if !ok {
-			beeep.Alert("warning: desktop video streaming disabled",videoMissingCapInstructions, nil)
+			beeep.Alert("warning: desktop video streaming disabled", videoMissingCapInstructions, nil)
 			log.Printf("warning: desktop video streaming disabled: the process lacks CAP_SYS_ADMIN, which kmsgrab needs to capture the framebuffer.")
 			// File capabilities (setcap) are the preferred fix, but they are
 			// silently ignored on nosuid mounts, so give the right advice for
@@ -233,7 +233,7 @@ func signalHandler(w http.ResponseWriter, r *http.Request, pad *trackpad.Device,
 	pc.OnDataChannel(func(dc *webrtc.DataChannel) {
 		log.Printf("data channel received from %s", r.RemoteAddr)
 		dc.OnMessage(func(msg webrtc.DataChannelMessage) {
-			fmt.Printf("%s\n", string(msg.Data))
+			fmt.Printf("foo %s\n", string(msg.Data))
 
 			var ev input.Event
 			if err := json.Unmarshal(msg.Data, &ev); err != nil {
@@ -284,6 +284,14 @@ func signalHandler(w http.ResponseWriter, r *http.Request, pad *trackpad.Device,
 		}
 	}
 	defer stopVideo()
+
+	// When this client goes away, release any tool/contact state it left
+	// behind. If a stroke/gesture was active when the data channel dropped or
+	// the client backgrounded the page, its tip-up/pointerup was lost and the
+	// virtual device would otherwise stay "down" — making the next client's
+	// first touch invisible until it lifted and re-touched.
+	defer tabletDev.Reset()
+	defer pad.Reset()
 
 	for {
 		_, data, err := ws.ReadMessage()
