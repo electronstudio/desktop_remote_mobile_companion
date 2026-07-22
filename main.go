@@ -32,6 +32,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/mdp/qrterminal/v3"
 	"github.com/pion/webrtc/v4"
+	"github.com/gen2brain/beeep"
 )
 
 //go:embed static/*
@@ -94,9 +95,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("certificate setup failed: %v", err)
 	}
-
+	beeep.Alert("Testing","test",nil)
 	pad, err := trackpad.New()
 	if err != nil {
+		beeep.Alert("failed to register virtual trackpad", uinputInstructions, nil)
 		log.Fatalf("failed to register virtual trackpad: %v\n\n%s", err, uinputInstructions)
 	}
 	defer pad.Close()
@@ -141,7 +143,8 @@ func main() {
 		if ok, err := hasCapSysAdmin(); err != nil {
 			log.Printf("warning: could not check CAP_SYS_ADMIN (%v); desktop video may fail", err)
 		} else if !ok {
-			log.Printf("warning: desktop video streaming disabled for this run: the process lacks CAP_SYS_ADMIN, which kmsgrab needs to capture the framebuffer.")
+			beeep.Alert("warning: desktop video streaming disabled",videoMissingCapInstructions, nil)
+			log.Printf("warning: desktop video streaming disabled: the process lacks CAP_SYS_ADMIN, which kmsgrab needs to capture the framebuffer.")
 			// File capabilities (setcap) are the preferred fix, but they are
 			// silently ignored on nosuid mounts, so give the right advice for
 			// the actual situation instead of sending the user down a blind
