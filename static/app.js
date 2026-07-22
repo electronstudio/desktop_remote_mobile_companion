@@ -70,6 +70,28 @@
     }
   }
 
+  // Tell the server whether the tablet panel is the active panel in any area.
+  // When it is not, the server releases the virtual pen (proximity-out) so the
+  // system mouse works again; when it is, the pen stays in proximity and the
+  // keep-alive runs so rapid strokes work. This avoids the perpetual mouse
+  // grab that keeping the tool in proximity would otherwise cause when the
+  // user is not drawing.
+  function notifyTabletActive() {
+    if (!conn.channel || conn.channel.readyState !== 'open') return;
+    let active = false;
+    document.querySelectorAll('.area').forEach(areaEl => {
+      const obj = areaEl.__areaObj;
+      const idx = obj ? obj.state.currentIndex : null;
+      if (idx != null && PANEL_ORDER[idx] === 'tablet') active = true;
+    });
+    const payload = { device: 'tablet', type: 'activate', active };
+    try {
+      conn.channel.send(JSON.stringify(payload));
+    } catch (err) {
+      console.error('send activate failed', err);
+    }
+  }
+
   function panelSurface(panel, panelId) {
     if (panelId === 'tablet') {
       return panel.querySelector('.tablet-surface');
@@ -176,6 +198,7 @@
     arrangePanels(areaObj, areaObj.state.currentIndex, false);
     areaObj.state.settling = false;
     attachVideoToSurfaces();
+    notifyTabletActive();
   }
 
   function startPan(areaObj, e, edge, zone) {
@@ -255,20 +278,8 @@
     if (!surface) return;
     const device = panelId;
 
-    // Log lifecycle pointer events (not pointermove) to the log panel so we
-    // can see exactly which events the browser fires for each touch — useful
-    // for diagnosing lost/merged strokes when touches happen in rapid
-    // succession.
-    const logPointer = (label, e) => {
-      const rect = surface.getBoundingClientRect();
-      const x = ((e.clientX - rect.left) / rect.width).toFixed(3);
-      const y = ((e.clientY - rect.top) / rect.height).toFixed(3);
-      log(`${device} ${label} id=${e.pointerId} pt=${e.pointerType} x=${x} y=${y}`);
-    };
-
     surface.addEventListener('pointerdown', e => {
       e.preventDefault();
-      logPointer('pointerdown', e);
       if (areaObj.state.settling) return;
       areaObj.state.activePointers.set(e.pointerId, { surface, device });
       surface.setPointerCapture(e.pointerId);
@@ -299,7 +310,6 @@
 
     const endPointer = e => {
       e.preventDefault();
-      logPointer(e.type === 'pointercancel' ? 'pointercancel' : 'pointerup', e);
       const info = areaObj.state.activePointers.get(e.pointerId);
       if (!info) return;
       areaObj.state.activePointers.delete(e.pointerId);
@@ -312,8 +322,6 @@
 
     surface.addEventListener('pointerup', endPointer, { passive: false });
     surface.addEventListener('pointercancel', endPointer, { passive: false });
-    surface.addEventListener('pointerenter', e => logPointer('pointerenter', e), { passive: false });
-    surface.addEventListener('pointerleave', e => logPointer('pointerleave', e), { passive: false });
     surface.addEventListener('contextmenu', e => e.preventDefault());
 
     // Prevent the browser from interpreting rapid touches as touch gestures
@@ -558,6 +566,7 @@
     conn.channel.onopen = () => {
       if (myId !== conn.currentId) return;
       log('Data channel open', 'ok');
+      notifyTabletActive();
     };
 
     conn.channel.onclose = () => {

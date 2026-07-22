@@ -24,6 +24,7 @@ type Event struct {
 	Device string  `json:"device"`
 	Type   string  `json:"type"`
 	Button string  `json:"button,omitempty"`
+	Active *bool   `json:"active,omitempty"` // control: tablet panel activation (type "activate")
 	T      []Touch `json:"t"`
 }
 

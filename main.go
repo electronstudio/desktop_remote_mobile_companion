@@ -59,6 +59,8 @@ var cli struct {
 	VideoQP    int    `arg:"--video-qp" default:"24" help:"h264_vaapi constant-quality QP"`
 	VideoWidth int    `arg:"--video-width" default:"0" help:"cap video output width; 0 native (reserved for future)"`
 	LowPower   int    `arg:"--low-power" default:"0" help:"h264_vaapi low-power mode (0 or 1)"`
+
+	NoTabletKeepalive bool `arg:"--no-tablet-keepalive" default:"false" help:"disable the tablet hover keep-alive (Mutter cooldown workaround); use on compositors without the cooldown (e.g. wlroots) so the mouse is not grabbed while idle"`
 }
 
 type signalMsg struct {
@@ -103,7 +105,7 @@ func main() {
 	}
 	defer pad.Close()
 
-	tabletDev, err := tablet.New()
+	tabletDev, err := tablet.New(!cli.NoTabletKeepalive)
 	if err != nil {
 		log.Fatalf("failed to register virtual graphics tablet: %v\n\n%s", err, uinputInstructions)
 	}
@@ -233,8 +235,6 @@ func signalHandler(w http.ResponseWriter, r *http.Request, pad *trackpad.Device,
 	pc.OnDataChannel(func(dc *webrtc.DataChannel) {
 		log.Printf("data channel received from %s", r.RemoteAddr)
 		dc.OnMessage(func(msg webrtc.DataChannelMessage) {
-			fmt.Printf("foo %s\n", string(msg.Data))
-
 			var ev input.Event
 			if err := json.Unmarshal(msg.Data, &ev); err != nil {
 				log.Printf("bad touch event from %s: %v", r.RemoteAddr, err)
@@ -242,7 +242,10 @@ func signalHandler(w http.ResponseWriter, r *http.Request, pad *trackpad.Device,
 			}
 			switch ev.Device {
 			case "tablet":
-				if err := tabletDev.ProcessEvent(ev); err != nil {
+				if ev.Type == "activate" {
+					active := ev.Active != nil && *ev.Active
+					tabletDev.SetActive(active)
+				} else if err := tabletDev.ProcessEvent(ev); err != nil {
 					log.Printf("tablet event error from %s: %v", r.RemoteAddr, err)
 				}
 			case "trackpad":

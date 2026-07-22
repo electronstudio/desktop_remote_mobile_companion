@@ -14,7 +14,11 @@ Connect your mobile device wirelessly to your PC and use it as:
 * ~~Extra display~~ (TO DO)
 * ~~Game controller~~ (TO DO)
 
-Designed for Linux Wayland.  Linux X11 may work.
+Tested desktops: Gnome Wayland, XFCE X11.
+
+Tested software: Gimp, Krita
+
+Tested mobile devices: iPhone, iPad + Apple Pencil.
 
 ## Compared to Weylus
 
@@ -57,6 +61,10 @@ If you can't see your mouse pointer, you need to disable hardware cursor:
     echo "KWIN_FORCE_SW_CURSOR=1" | sudo tee /etc/environment
     echo "WLR_NO_HARDWARE_CURSORS=1" | sudo tee /etc/environment
     sudo reboot
+
+By default when the tablet tool is active it keeps the tablet 'hovering'
+which prevents use of a mouse until you switch away from the tool.
+This is required by some software such as Gnome.  But you can disable it...
 
 ## Run
 
