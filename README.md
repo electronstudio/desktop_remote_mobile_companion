@@ -51,6 +51,13 @@ On Intel GPU systems the full drivers are required, install on Debian with:
 
 Also on Intel the `--low-power 1` option may improve latency.
 
+If you can't see your mouse pointer, you need to disable hardware cursor:
+
+    echo "MUTTER_DEBUG_DISABLE_HW_CURSORS=1" | sudo tee /etc/environment
+    echo "KWIN_FORCE_SW_CURSOR=1" | sudo tee /etc/environment
+    echo "WLR_NO_HARDWARE_CURSORS=1" | sudo tee /etc/environment
+    sudo reboot
+
 ## Run
 
 ```bash
