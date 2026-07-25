@@ -16,8 +16,7 @@ const videoMissingCapInstructions = `To enable desktop video capture, grant CAP_
 
   sudo setcap cap_sys_admin+ep <executable_path>
 
-Note: you must re-run setcap after every rebuild, since it is stored as a file
-extended attribute and is lost when the file is replaced. Alternatively, run
+Alternatively, run
 the program with --no-video to use only the trackpad/tablet without desktop
 streaming.`
 

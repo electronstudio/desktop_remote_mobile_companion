@@ -29,7 +29,7 @@ import (
 	"github.com/electronstudio/desktop_remote_mobile_companion/tablet"
 	"github.com/electronstudio/desktop_remote_mobile_companion/trackpad"
 	"github.com/electronstudio/desktop_remote_mobile_companion/video"
-	"github.com/gen2brain/beeep"
+	"github.com/electronstudio/low_latency_dictation/toast"
 	"github.com/gorilla/websocket"
 	"github.com/mdp/qrterminal/v3"
 	"github.com/pion/webrtc/v4"
@@ -77,6 +77,10 @@ func main() {
 	listenAddr := fmt.Sprintf(":%d", cli.Port)
 	versionStr := strings.TrimSpace(version)
 
+	if err := toast.Init(nil); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: %v\n", err)
+	}
+
 	// videoEnabled is the effective decision about whether desktop video
 	// streaming will be attempted. It starts as the user's --no-video choice
 	// and may be cleared at startup if the process lacks CAP_SYS_ADMIN, which
@@ -97,16 +101,17 @@ func main() {
 	if err != nil {
 		log.Fatalf("certificate setup failed: %v", err)
 	}
-	beeep.Alert("Testing", "test", nil)
+
 	pad, err := trackpad.New()
 	if err != nil {
-		beeep.Alert("failed to register virtual trackpad", uinputInstructions, nil)
+		toast.Show("failed to register virtual trackpad", uinputInstructions, true)
 		log.Fatalf("failed to register virtual trackpad: %v\n\n%s", err, uinputInstructions)
 	}
 	defer pad.Close()
 
 	tabletDev, err := tablet.New(!cli.NoTabletKeepalive)
 	if err != nil {
+		toast.Show("failed to register virtual graphics tablet", uinputInstructions, true)
 		log.Fatalf("failed to register virtual graphics tablet: %v\n\n%s", err, uinputInstructions)
 	}
 	defer tabletDev.Close()
@@ -145,7 +150,7 @@ func main() {
 		if ok, err := hasCapSysAdmin(); err != nil {
 			log.Printf("warning: could not check CAP_SYS_ADMIN (%v); desktop video may fail", err)
 		} else if !ok {
-			beeep.Alert("warning: desktop video streaming disabled", videoMissingCapInstructions, nil)
+			toast.Show("warning: desktop video streaming disabled", videoMissingCapInstructions, false)
 			log.Printf("warning: desktop video streaming disabled: the process lacks CAP_SYS_ADMIN, which kmsgrab needs to capture the framebuffer.")
 			// File capabilities (setcap) are the preferred fix, but they are
 			// silently ignored on nosuid mounts, so give the right advice for

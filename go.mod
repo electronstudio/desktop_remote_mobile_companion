@@ -5,6 +5,7 @@ go 1.26.0
 require (
 	github.com/alexflint/go-arg v1.6.1
 	github.com/asticode/go-astiav v0.41.0
+	github.com/electronstudio/low_latency_dictation v0.6.2
 	github.com/gorilla/websocket v1.5.3
 	github.com/jbdemonte/virtual-device v1.2.1
 	github.com/mdp/qrterminal/v3 v3.2.1
@@ -13,16 +14,10 @@ require (
 )
 
 require (
-	git.sr.ht/~jackmordaunt/go-toast v1.1.2 // indirect
 	github.com/alexflint/go-scalar v1.2.0 // indirect
 	github.com/asticode/go-astikit v0.42.0 // indirect
-	github.com/esiqveland/notify v0.14.0 // indirect
-	github.com/gen2brain/beeep v0.11.2 // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect
-	github.com/godbus/dbus/v5 v5.2.2 // indirect
 	github.com/google/uuid v1.6.0 // indirect
-	github.com/jackmordaunt/icns/v3 v3.0.1 // indirect
-	github.com/nfnt/resize v0.0.0-20180221191011-83c6a9932646 // indirect
 	github.com/pion/datachannel v1.6.2 // indirect
 	github.com/pion/dtls/v3 v3.1.4 // indirect
 	github.com/pion/ice/v4 v4.2.7 // indirect
@@ -38,9 +33,6 @@ require (
 	github.com/pion/stun/v3 v3.1.6 // indirect
 	github.com/pion/transport/v4 v4.0.2 // indirect
 	github.com/pion/turn/v5 v5.0.10 // indirect
-	github.com/sergeymakinen/go-bmp v1.0.0 // indirect
-	github.com/sergeymakinen/go-ico v1.0.0 // indirect
-	github.com/tadvi/systray v0.0.0-20190226123456-11a2b8fa57af // indirect
 	github.com/wlynxg/anet v0.0.5 // indirect
 	golang.org/x/crypto v0.48.0 // indirect
 	golang.org/x/net v0.50.0 // indirect
