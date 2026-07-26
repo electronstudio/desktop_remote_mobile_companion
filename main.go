@@ -53,12 +53,12 @@ var upgrader = websocket.Upgrader{
 var cli struct {
 	Port int `arg:"-p,--port" default:"8080" help:"HTTPS listen port"`
 
-	NoVideo    bool   `arg:"--no-video" default:"false" help:"disable desktop video streaming"`
-	VideoCard  string `arg:"--video-card" default:"" help:"DRM card to capture (e.g. /dev/dri/card1); empty auto-detects"`
-	VideoFps   int    `arg:"--video-fps" default:"30" help:"video capture frame rate"`
-	VideoQP    int    `arg:"--video-qp" default:"24" help:"h264_vaapi constant-quality QP"`
-	VideoWidth int    `arg:"--video-width" default:"0" help:"cap video output width; 0 native (reserved for future)"`
-	LowPower   int    `arg:"--low-power" default:"0" help:"h264_vaapi low-power mode (0 or 1)"`
+	VideoSource string `arg:"--video-source" default:"kmsgrab" help:"desktop video capture source: \"kmsgrab\" (VAAPI DRM capture, default) or \"none\" to disable video"`
+	VideoCard   string `arg:"--video-card" default:"" help:"DRM card to capture (e.g. /dev/dri/card1); empty auto-detects"`
+	VideoFps    int    `arg:"--video-fps" default:"30" help:"video capture frame rate"`
+	VideoQP     int    `arg:"--video-qp" default:"24" help:"h264_vaapi constant-quality QP"`
+	VideoWidth  int    `arg:"--video-width" default:"0" help:"cap video output width; 0 native (reserved for future)"`
+	LowPower    int    `arg:"--low-power" default:"0" help:"h264_vaapi low-power mode (0 or 1)"`
 
 	NoTabletKeepalive bool `arg:"--no-tablet-keepalive" default:"false" help:"disable the tablet hover keep-alive (Mutter cooldown workaround); use on compositors without the cooldown (e.g. wlroots) so the mouse is not grabbed while idle"`
 }
@@ -82,11 +82,12 @@ func main() {
 	}
 
 	// videoEnabled is the effective decision about whether desktop video
-	// streaming will be attempted. It starts as the user's --no-video choice
-	// and may be cleared at startup if the process lacks CAP_SYS_ADMIN, which
-	// kmsgrab needs to acquire DRM master and map the framebuffer. Keeping it
-	// as a package var lets signalHandler avoid re-running the check.
-	videoEnabled = !cli.NoVideo
+	// streaming will be attempted. It starts true unless the user selected
+	// --video-source=none, and may be cleared at startup if the process lacks
+	// CAP_SYS_ADMIN, which kmsgrab needs to acquire DRM master and map the
+	// framebuffer. Keeping it as a package var lets signalHandler avoid
+	// re-running the check.
+	videoEnabled = cli.VideoSource != "none"
 
 	log.Printf("Desktop Remote Mobile Companion v%s", versionStr)
 
@@ -141,7 +142,7 @@ func main() {
 		signalHandler(w, r, pad, tabletDev)
 	})
 
-	if !cli.NoVideo {
+	if cli.VideoSource == "kmsgrab" {
 		// kmsgrab requires CAP_SYS_ADMIN. Without it every phone connection
 		// would fail with a cryptic "No handle set on framebuffer" / EINVAL
 		// error from FFmpeg. Detect that once up front, tell the user how to
@@ -169,15 +170,15 @@ func main() {
 	}
 
 	if videoEnabled {
-		log.Printf("desktop video streaming enabled (VAAPI/kmsgrab)")
+		log.Printf("desktop video streaming enabled (source=%s, VAAPI/kmsgrab)", cli.VideoSource)
 		if cli.VideoCard != "" {
 			log.Printf("  capture card: %s", cli.VideoCard)
 		} else {
 			log.Printf("  capture card: auto-detect")
 		}
 		log.Printf("  fps=%d qp=%d low-power=%d", cli.VideoFps, cli.VideoQP, cli.LowPower)
-	} else if cli.NoVideo {
-		log.Printf("desktop video streaming disabled (--no-video)")
+	} else if cli.VideoSource == "none" {
+		log.Printf("desktop video streaming disabled (--video-source=none)")
 	} else {
 		log.Printf("desktop video streaming disabled (missing CAP_SYS_ADMIN)")
 	}
@@ -332,6 +333,7 @@ func signalHandler(w http.ResponseWriter, r *http.Request, pad trackpad.Device, 
 			// keeps using trackpad/tablet.
 			if videoEnabled && hasVideoMedia(msg.SDP) && videoStreamer == nil {
 				vs, err := video.New(video.Config{
+					Source:    cli.VideoSource,
 					CardPath:  cli.VideoCard,
 					MaxWidth:  cli.VideoWidth,
 					FrameRate: cli.VideoFps,
@@ -340,7 +342,7 @@ func signalHandler(w http.ResponseWriter, r *http.Request, pad trackpad.Device, 
 				})
 				if err != nil {
 					log.Printf("video unavailable for %s: %v", r.RemoteAddr, err)
-					log.Printf("  if you do not need desktop video, run with --no-video to suppress this; if you do, make sure CAP_SYS_ADMIN is granted and a VAAPI-capable GPU is present")
+					log.Printf("  if you do not need desktop video, run with --video-source=none to suppress this; if you do, make sure CAP_SYS_ADMIN is granted and a VAAPI-capable GPU is present")
 				} else {
 					if _, err := pc.AddTrack(vs.Track()); err != nil {
 						log.Printf("add video track failed for %s: %v", r.RemoteAddr, err)

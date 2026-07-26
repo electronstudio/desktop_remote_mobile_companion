@@ -3,12 +3,20 @@
 package video
 
 import (
+	"fmt"
+
 	"github.com/pion/webrtc/v4"
 )
 
 // Config configures the capture pipeline. All fields are advisory; backends
 // use the subset they support.
 type Config struct {
+	// Source selects the capture backend. "kmsgrab" (the default, "") uses the
+	// Linux kmsgrab DRM + VAAPI pipeline; "none" disables video and is handled
+	// by the caller (New is never called with it). Unknown values are rejected
+	// by New with an error.
+	Source string
+
 	// CardPath is the DRM card to capture from (e.g. "/dev/dri/card1").
 	// Empty means auto-detect the first /dev/dri/card* device.
 	CardPath string
@@ -53,5 +61,12 @@ type Streamer interface {
 // /dev/dri, or the platform has no implementation); the caller should continue
 // without a video track.
 func New(cfg Config) (Streamer, error) {
-	return newStreamer(cfg)
+	switch cfg.Source {
+	case "", "kmsgrab":
+		return newStreamer(cfg)
+	case "none":
+		return nil, fmt.Errorf("video: source %q disables video; the caller should not call New", cfg.Source)
+	default:
+		return nil, fmt.Errorf("video: unsupported capture source %q", cfg.Source)
+	}
 }

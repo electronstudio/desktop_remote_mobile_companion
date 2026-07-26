@@ -70,7 +70,7 @@ Command-line flags are handled by `github.com/alexflint/go-arg`.
 | Flag | Default | Description |
 |---|---|---|
 | `-p`, `--port` | `8080` | HTTPS listen port |
-| `--no-video` | `false` | Disable desktop video streaming entirely |
+| `--video-source` | `kmsgrab` | Desktop video capture source: `kmsgrab` (VAAPI DRM capture) or `none` to disable video |
 | `--video-card` | (auto) | DRM card to capture (e.g. `/dev/dri/card1`); empty auto-detects the first `/dev/dri/card*` |
 | `--video-fps` | `30` | Video capture frame rate |
 | `--video-qp` | `24` | h264_vaapi constant-quality QP |
@@ -120,7 +120,7 @@ The `kmsgrab` DRM demuxer used by the video pipeline requires `CAP_SYS_ADMIN` to
 video: open kmsgrab /dev/dri/cardN: Invalid argument
 ```
 
-At startup, when video is enabled (the default, i.e. not `--no-video`), the server checks the process effective capability set (bit 21 of `CapEff` from `/proc/self/status`). If `CAP_SYS_ADMIN` is missing it logs a clear warning with the fix and auto-disables video for that run; trackpad/tablet keep working and the per-connection FFmpeg error is never printed.
+At startup, when the source is `kmsgrab` (the default, i.e. not `--video-source=none`), the server checks the process effective capability set (bit 21 of `CapEff` from `/proc/self/status`). If `CAP_SYS_ADMIN` is missing it logs a clear warning with the fix and auto-disables video for that run; trackpad/tablet keep working and the per-connection FFmpeg error is never printed.
 
 To grant the capability to the binary once (no need to run as root afterwards):
 
@@ -128,7 +128,7 @@ To grant the capability to the binary once (no need to run as root afterwards):
 sudo setcap cap_sys_admin+ep ./companion
 ```
 
-`setcap` is stored as a file extended attribute, so it must be re-applied after every rebuild (the file is replaced). Alternatively run with `--no-video` to use only the trackpad/tablet. Running the binary as root also works but is not recommended.
+`setcap` is stored as a file extended attribute, so it must be re-applied after every rebuild (the file is replaced). Alternatively run with `--video-source=none` to use only the trackpad/tablet. Running the binary as root also works but is not recommended.
 
 ### File capabilities and nosuid mounts
 
@@ -261,7 +261,7 @@ Manual test flow:
    - For the tablet, run `evtest` and confirm `EV_ABS / ABS_X` and `ABS_Y` events are emitted as an absolute single-point contact.
    - Alternatively, `libinput debug-events` shows pointer, multitouch, and tablet-tool events.
 7. Switch the mode selector to “Tablet”, touch the phone, and confirm the cursor follows your finger as an absolute position. Press the L/M/R buttons and confirm `BTN_TOUCH`/`BTN_STYLUS`/`BTN_STYLUS2` events are emitted without moving the pointer.
-8. With video enabled (default), switch to the “Tablet” panel and confirm the desktop appears in the `<video>` element. Swipe away to another panel and confirm the video stops rendering; swipe back and confirm it resumes. Run with `--no-video` and confirm the tablet panel shows only the “Tablet” placeholder and trackpad/tablet still work.
+8. With video enabled (default), switch to the “Tablet” panel and confirm the desktop appears in the `<video>` element. Swipe away to another panel and confirm the video stops rendering; swipe back and confirm it resumes. Run with `--video-source=none` and confirm the tablet panel shows only the “Tablet” placeholder and trackpad/tablet still work.
 
 Automated headless Chromium checks are possible with `--ignore-certificate-errors` and `--virtual-time-budget`, but WebRTC connection setup timing is flaky in headless mode; prefer manual device testing.
 
