@@ -38,7 +38,10 @@ github.com/electronstudio/desktop_remote_mobile_companion
 - `input/event.go` — shared `Touch`/`Event` types and coordinate helpers used by both devices.
 - `trackpad/trackpad_linux.go` — virtual Linux multitouch trackpad (Stage 2).
 - `tablet/tablet_linux.go` — virtual Linux absolute graphics tablet.
-- `video/video_linux.go` — desktop capture (kmsgrab) + VAAPI scale + h264_vaapi encode pipeline feeding a Pion H264 WebRTC track.
+- `video/video_linux.go` — Linux kmsgrab capture backend (DRM framebuffer) feeding a Pion H264 WebRTC track.
+- `video/video_x11grab_linux.go` — Linux x11grab capture backend (X server).
+- `video/encoder.go` — shared H264 encoder + filter-graph helper (the orthogonal "encoder axis": h264_vaapi / h264_nvenc / libx264), used by all capture backends.
+- `video/video_windows.go` — Windows ddagrab capture backend (placeholder pending implementation).
 - `static/index.html` — responsive touch UI with mode selector, embedded desktop `<video>` in the tablet panel, and version display.
 - `static/app.js` — browser WebRTC client, touch-event capture, mode switching, recv-only video transceiver + `ontrack` rendering with visibility gating.
 - `VERSION` — embedded version string, displayed by both server and client.
@@ -70,11 +73,12 @@ Command-line flags are handled by `github.com/alexflint/go-arg`.
 | Flag | Default | Description |
 |---|---|---|
 | `-p`, `--port` | `8080` | HTTPS listen port |
-| `--video-source` | `kmsgrab` | Desktop video capture source: `kmsgrab` (VAAPI DRM capture) or `none` to disable video |
-| `--video-card` | (auto) | DRM card to capture (e.g. `/dev/dri/card1`); empty auto-detects the first `/dev/dri/card*` |
+| `--video-source` | `kmsgrab` | Desktop video capture source: `kmsgrab` (DRM framebuffer), `x11grab` (X server), or `none` to disable video. On Windows the source is always `ddagrab` regardless of this flag |
+| `--video-encoder` | `auto` | Video H264 encoder: `vaapi`, `nvenc`, `libx264`, or `auto` (auto = nvenc on NVIDIA, else vaapi, else libx264). `libx264` is only used when manually specified or as a last-resort fallback |
+| `--video-card` | (auto) | DRM card to capture (e.g. `/dev/dri/card1`); empty auto-detects the first `/dev/dri/card*` (kmsgrab only) |
 | `--video-fps` | `30` | Video capture frame rate |
-| `--video-qp` | `24` | h264_vaapi constant-quality QP |
-| `--low-power` | `1` | h264_vaapi low-power mode (0 or 1) |
+| `--video-qp` | `24` | Encoder quality (h264_vaapi/h264_nvenc QP, or libx264 CRF; lower is higher quality) |
+| `--low-power` | `0` | h264_vaapi low-power mode (0 or 1); ignored for other encoders |
 | `--video-width` | `0` | Cap output width; `0` = native (reserved for future downscaling) |
 | `--no-tablet-keepalive` | `false` | Disable the tablet hover keep-alive (a GNOME/Mutter cooldown workaround). On compositors without that cooldown (e.g. wlroots/Sway), set this so the system mouse is not grabbed while the tablet panel is idle |
 
@@ -212,7 +216,7 @@ The server prints the raw JSON line to stdout using `fmt.Printf`.
 
 The phone's **tablet** panel shows a live H264 stream of the PC desktop, sent server→browser over the same WebRTC peer connection as the touch data channel (opposite direction). The browser adds a `recvonly` video transceiver; when the server's `signalHandler` sees a video m-line in the offer it builds a capture pipeline, `AddTrack`s an H264 `TrackLocalStaticSample`, and answers. H264 samples flow over RTP to the phone's `<video>` element.
 
-The capture pipeline (in `video/video_linux.go`) mirrors:
+The capture pipeline has two independent axes: the **source** (`--video-source`) and the **encoder** (`--video-encoder`, auto by default). On Linux the kmsgrab source (the default) mirrors:
 
 ```
 ffmpeg -device /dev/dri/card0 -f kmsgrab -i - \
@@ -220,12 +224,17 @@ ffmpeg -device /dev/dri/card0 -f kmsgrab -i - \
     -c:v h264_vaapi -qp 24 -bf 0 -
 ```
 
+The `x11grab` source reads pixels from the X server (no `CAP_SYS_ADMIN` needed) and pairs with any encoder (libx264 software, or h264_vaapi/h264_nvenc via `hwupload`). The source owns the input + decode pipeline (`video_linux.go` / `video_x11grab_linux.go`); the shared `encoder.go` owns the filter graph + H264 encoder, chosen from the source's frame type (hardware vs software) and the requested encoder family. The auto encoder default is h264_nvenc on NVIDIA systems (except kmsgrab, which cannot feed nvenc), else h264_vaapi if available, else libx264.
+
 Notes:
-- **VAAPI-only.** Requires a VAAPI-capable GPU, the `kmsgrab` demuxer, and `h264_vaapi` encoder. Build needs the FFmpeg/libdrm C dev packages (`libavcodec-dev libavfilter-dev libavformat-dev libavutil-dev libavdevice-dev libdrm-dev`) and CGO.
-- **Graceful degradation.** If `video.New` fails (no VAAPI/kmsgrab/`/dev/dri`), the server logs a warning, adds no video track, and trackpad/tablet keep working; the tablet panel shows its placeholder.
+- **Encoder availability.** h264_vaapi needs a VAAPI-capable GPU; h264_nvenc needs the NVIDIA driver; libx264 is pure software. The auto default falls back to libx264 only when no hardware encoder is available (or when manually specified).
+- **kmsgrab requires `CAP_SYS_ADMIN`** (see below) and typically has no VAAPI on NVIDIA, so on NVIDIA systems the server warns and `x11grab` is the better source.
+- **x11grab on Wayland** only captures the X server (XWayland), so native Wayland surfaces may appear as a black screen; the server warns and `kmsgrab` is the better source on Wayland.
+- **Build needs** the FFmpeg/libdrm C dev packages (`libavcodec-dev libavfilter-dev libavformat-dev libavutil-dev libavdevice-dev libdrm-dev`), x11grab support in FFmpeg, and CGO.
+- **Graceful degradation.** If `video.New` fails (no encoder/source/driver), the server logs a warning, adds no video track, and trackpad/tablet keep working; the tablet panel shows its placeholder.
 - **Visibility gating.** The browser only attaches the track to a `<video>` while the tablet panel is the active panel in its area, so a hidden surface does no decode work.
 - **One client at a time.** The pipeline is created per peer connection; `kmsgrab` is exclusive, so only one phone receives video concurrently. A shared fan-out pipeline is future work (see `improvements.md`).
-- The fixed 30 fps default, an x11grab/libx264 software fallback, adaptive native framerate, and multi-client fan-out are tracked in `improvements.md`.
+- The fixed 30 fps default, a Windows ddagrab backend, adaptive native framerate, and multi-client fan-out are tracked in `improvements.md`.
 
 ## Dependencies
 
@@ -261,7 +270,7 @@ Manual test flow:
    - For the tablet, run `evtest` and confirm `EV_ABS / ABS_X` and `ABS_Y` events are emitted as an absolute single-point contact.
    - Alternatively, `libinput debug-events` shows pointer, multitouch, and tablet-tool events.
 7. Switch the mode selector to “Tablet”, touch the phone, and confirm the cursor follows your finger as an absolute position. Press the L/M/R buttons and confirm `BTN_TOUCH`/`BTN_STYLUS`/`BTN_STYLUS2` events are emitted without moving the pointer.
-8. With video enabled (default), switch to the “Tablet” panel and confirm the desktop appears in the `<video>` element. Swipe away to another panel and confirm the video stops rendering; swipe back and confirm it resumes. Run with `--video-source=none` and confirm the tablet panel shows only the “Tablet” placeholder and trackpad/tablet still work.
+8. With video enabled (default `--video-source=kmsgrab`), switch to the “Tablet” panel and confirm the desktop appears in the `<video>` element. Swipe away to another panel and confirm the video stops rendering; swipe back and confirm it resumes. Try `--video-source=x11grab` (with a software `--video-encoder=libx264`, or auto on a system with VAAPI/NVIDIA) and confirm it captures the X desktop. Run with `--video-source=none` and confirm the tablet panel shows only the “Tablet” placeholder and trackpad/tablet still work.
 
 Automated headless Chromium checks are possible with `--ignore-certificate-errors` and `--virtual-time-budget`, but WebRTC connection setup timing is flaky in headless mode; prefer manual device testing.
 

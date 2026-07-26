@@ -1,29 +1,21 @@
 //go:build linux
 
-// Package video captures the Linux desktop via the kmsgrab DRM demuxer and
-// feeds the decoded frames to a shared H264 encoder (see encoder.go). The
-// encoder builds the filter graph and opens the H264 encoder appropriate for
-// the chosen --video-encoder (h264_vaapi, h264_nvenc, or libx264); this file
-// only owns the kmsgrab input and the decode pipeline.
+// Package video captures the Linux desktop via the x11grab input device and
+// feeds the decoded (software) frames to the shared H264 encoder (see
+// encoder.go). This is the software-input counterpart to the kmsgrab backend
+// in video_linux.go: x11grab reads pixels from the X server instead of the DRM
+// framebuffer, so it needs no CAP_SYS_ADMIN and works without VAAPI, but on a
+// Wayland session it can only capture XWayland content (native Wayland
+// surfaces are invisible to it) — main warns about that case.
 //
-// This file is the Linux kmsgrab backend. The cross-platform Streamer
-// interface, Config, and New constructor live in video.go; the shared
-// encoder/filter logic lives in encoder.go; the x11grab backend lives in
-// video_x11grab_linux.go.
+// x11grab produces software frames, so it can pair with any encoder:
+// libx264 (pure software), h264_vaapi (uploaded via hwupload), or h264_nvenc
+// (uploaded to CUDA via hwupload). The encoder axis is handled by encoder.go;
+// this file only owns the x11grab input and the (software) decode pipeline.
 //
-// The kmsgrab + h264_vaapi pipeline mirrors the ffmpeg command:
-//
-//	ffmpeg -device /dev/dri/card0 -f kmsgrab -i - \
-//	    -vf 'hwmap=derive_device=vaapi,scale_vaapi=format=nv12' \
-//	    -c:v h264_vaapi -qp 24 -bf 0 -
-//
-// kmsgrab produces DRM hardware frames, so it pairs naturally with h264_vaapi
-// (and, via hwdownload, libx264). It cannot feed h264_nvenc; resolveEncoder
-// rejects that combination. On NVIDIA systems kmsgrab usually has no VAAPI,
-// so main warns and the user should switch to --video-source x11grab.
-//
-// If New returns an error (no VAAPI, no kmsgrab, no /dev/dri), the caller
-// should simply continue without a video track; trackpad/tablet keep working.
+// If New returns an error (no x11grab, no X server, or the chosen encoder is
+// unavailable), the caller should simply continue without a video track;
+// trackpad/tablet keep working.
 package video
 
 import (
@@ -31,8 +23,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"path/filepath"
-	"sort"
 	"sync/atomic"
 	"time"
 
@@ -41,9 +31,9 @@ import (
 	"github.com/pion/webrtc/v4/pkg/media"
 )
 
-// kmsgrabStreamer owns the kmsgrab input, the decode pipeline, and the shared
-// encoder. It implements the video.Streamer interface.
-type kmsgrabStreamer struct {
+// x11grabStreamer owns the x11grab input, the software decode pipeline, and
+// the shared encoder. It implements the video.Streamer interface.
+type x11grabStreamer struct {
 	cfg   Config
 	track *webrtc.TrackLocalStaticSample
 	enc   *encoder
@@ -57,7 +47,7 @@ type kmsgrabStreamer struct {
 	// goroutine.
 	framesWritten uint64
 
-	// astiav input/decode objects, allocated eagerly in newKmsgrabStreamer.
+	// astiav input/decode objects, allocated eagerly in newX11grabStreamer.
 	inputFormatContext *astiav.FormatContext
 	decodeCodecContext *astiav.CodecContext
 	decodePacket       *astiav.Packet
@@ -65,27 +55,13 @@ type kmsgrabStreamer struct {
 	videoStream        *astiav.Stream
 }
 
-// newStreamer is the platform-specific dispatch called by the cross-platform
-// New in video.go. On Linux it routes the requested source to the matching
-// backend.
-func newStreamer(cfg Config) (Streamer, error) {
-	switch cfg.Source {
-	case "", "kmsgrab":
-		return newKmsgrabStreamer(cfg)
-	case "x11grab":
-		return newX11grabStreamer(cfg)
-	default:
-		return nil, fmt.Errorf("video: unsupported source %q on linux (want kmsgrab or x11grab)", cfg.Source)
-	}
-}
-
-// newKmsgrabStreamer builds the kmsgrab pipeline and the H264 track, but does
+// newX11grabStreamer builds the x11grab pipeline and the H264 track, but does
 // not start pushing frames yet. Call Start to begin streaming.
 //
-// A non-nil error means the system cannot capture (no VAAPI, no kmsgrab, no
-// /dev/dri, or the chosen encoder is unavailable); the caller should continue
-// without video.
-func newKmsgrabStreamer(cfg Config) (*kmsgrabStreamer, error) {
+// A non-nil error means the system cannot capture (no x11grab, no X server,
+// or the chosen encoder is unavailable); the caller should continue without
+// video.
+func newX11grabStreamer(cfg Config) (*x11grabStreamer, error) {
 	if cfg.FrameRate <= 0 {
 		cfg.FrameRate = 30
 	}
@@ -95,12 +71,10 @@ func newKmsgrabStreamer(cfg Config) (*kmsgrabStreamer, error) {
 	if cfg.LowPower != 0 && cfg.LowPower != 1 {
 		cfg.LowPower = 1
 	}
-	if cfg.CardPath == "" {
-		card, err := autoDetectCard()
-		if err != nil {
-			return nil, fmt.Errorf("video: auto-detect DRM card: %w", err)
-		}
-		cfg.CardPath = card
+
+	display := os.Getenv("DISPLAY")
+	if display == "" {
+		display = ":0.0"
 	}
 
 	track, err := webrtc.NewTrackLocalStaticSample(
@@ -111,12 +85,12 @@ func newKmsgrabStreamer(cfg Config) (*kmsgrabStreamer, error) {
 		return nil, fmt.Errorf("video: create track: %w", err)
 	}
 
-	enc, err := newEncoder(cfg, sourceKmsgrab)
+	enc, err := newEncoder(cfg, sourceX11grab)
 	if err != nil {
 		return nil, err
 	}
 
-	s := &kmsgrabStreamer{
+	s := &x11grabStreamer{
 		cfg:   cfg,
 		track: track,
 		enc:   enc,
@@ -124,93 +98,73 @@ func newKmsgrabStreamer(cfg Config) (*kmsgrabStreamer, error) {
 		done:  make(chan struct{}),
 	}
 
-	log.Printf("video: opening kmsgrab capture pipeline on %s (%dfps, qp %d, low-power %d)", cfg.CardPath, cfg.FrameRate, cfg.QP, cfg.LowPower)
+	log.Printf("video: opening x11grab capture pipeline on %s (%dfps, qp %d)", display, cfg.FrameRate, cfg.QP)
 
-	// Register FFmpeg devices (kmsgrab is an input device) and open the
-	// capture source up front so New fails fast if the hardware is missing.
+	// Register FFmpeg devices (x11grab is an input device) and open the
+	// capture source up front so New fails fast if X is unavailable.
 	astiav.RegisterAllDevices()
 
-	if err := s.initKmsgrab(); err != nil {
+	if err := s.initX11grab(display); err != nil {
 		s.freeInputDecode()
 		s.enc.free()
 		return nil, err
 	}
 
-	log.Printf("video: capture source ready (%dx%d)", s.decodeCodecContext.Width(), s.decodeCodecContext.Height())
+	log.Printf("video: capture source ready (%dx%d, pixfmt %s)", s.decodeCodecContext.Width(), s.decodeCodecContext.Height(), s.decodeCodecContext.PixelFormat().String())
 	return s, nil
 }
 
 // Start launches the capture/encode goroutine writing H264 samples to the
 // track returned by Track. It returns immediately. The goroutine runs until
 // Stop is called.
-func (s *kmsgrabStreamer) Start() {
-	log.Printf("video: starting kmsgrab capture/encode goroutine")
+func (s *x11grabStreamer) Start() {
+	log.Printf("video: starting x11grab capture/encode goroutine")
 	go s.captureLoop()
 }
 
 // Track returns the H264 WebRTC track the encoded samples are written to.
-func (s *kmsgrabStreamer) Track() *webrtc.TrackLocalStaticSample { return s.track }
+func (s *x11grabStreamer) Track() *webrtc.TrackLocalStaticSample { return s.track }
 
 // Stop signals the capture goroutine to stop and frees all resources. It is
 // safe to call multiple times.
-func (s *kmsgrabStreamer) Stop() {
+func (s *x11grabStreamer) Stop() {
 	select {
 	case <-s.stop:
 		// already stopped
 		return
 	default:
-		log.Printf("video: stopping kmsgrab capture pipeline")
+		log.Printf("video: stopping x11grab capture pipeline")
 		close(s.stop)
 	}
 	<-s.done
 	s.freeInputDecode()
 	s.enc.free()
-	log.Printf("video: kmsgrab capture pipeline stopped")
+	log.Printf("video: x11grab capture pipeline stopped")
 }
 
-// autoDetectCard returns the first /dev/dri/card* device path (sorted) that
-// the process can open, falling back to the first one found if none are
-// readable (kmsgrab open will report the real error).
-func autoDetectCard() (string, error) {
-	matches, err := filepath.Glob("/dev/dri/card*")
-	if err != nil {
-		return "", err
-	}
-	sort.Strings(matches)
-	if len(matches) == 0 {
-		return "", errors.New("no /dev/dri/card* devices found")
-	}
-	for _, m := range matches {
-		f, err := os.OpenFile(m, os.O_RDWR, 0)
-		if err == nil {
-			f.Close()
-			return m, nil
-		}
-	}
-	// None readable; return the first so the open error surfaces in initKmsgrab.
-	return matches[0], nil
-}
-
-// initKmsgrab opens the kmsgrab input device and prepares the decoder.
-func (s *kmsgrabStreamer) initKmsgrab() error {
+// initX11grab opens the x11grab input device and prepares the (software)
+// decoder. video_size is intentionally left unset so x11grab captures the
+// whole screen (its default).
+func (s *x11grabStreamer) initX11grab(display string) error {
 	s.inputFormatContext = astiav.AllocFormatContext()
 	if s.inputFormatContext == nil {
 		return errors.New("video: alloc input format context")
 	}
 
-	inputFormat := astiav.FindInputFormat("kmsgrab")
+	inputFormat := astiav.FindInputFormat("x11grab")
 	if inputFormat == nil {
-		return errors.New("video: kmsgrab input format not found (ffmpeg built without libdrm?)")
+		return errors.New("video: x11grab input format not found (ffmpeg built without x11grab?)")
 	}
 
 	deviceDictionary := astiav.NewDictionary()
 	defer deviceDictionary.Free()
-	if err := deviceDictionary.Set("device", s.cfg.CardPath, astiav.NewDictionaryFlags()); err != nil {
-		return fmt.Errorf("video: set kmsgrab device option: %w", err)
+	if err := deviceDictionary.Set("framerate", fmt.Sprintf("%d", s.cfg.FrameRate), astiav.NewDictionaryFlags()); err != nil {
+		return fmt.Errorf("video: set x11grab framerate option: %w", err)
 	}
+	// video_size is left unset: x11grab defaults to the whole screen.
 
-	if err := s.inputFormatContext.OpenInput("-", inputFormat, deviceDictionary); err != nil {
-		return fmt.Errorf("video: open kmsgrab %s: %w", s.cfg.CardPath, err)
+	if err := s.inputFormatContext.OpenInput(display, inputFormat, deviceDictionary); err != nil {
+		return fmt.Errorf("video: open x11grab %s: %w", display, err)
 	}
 
 	if err := s.inputFormatContext.FindStreamInfo(nil); err != nil {
@@ -224,12 +178,12 @@ func (s *kmsgrabStreamer) initKmsgrab() error {
 		}
 	}
 	if s.videoStream == nil {
-		return errors.New("video: no video stream in kmsgrab output")
+		return errors.New("video: no video stream in x11grab output")
 	}
 
 	decodeCodec := astiav.FindDecoder(s.videoStream.CodecParameters().CodecID())
 	if decodeCodec == nil {
-		return errors.New("video: FindDecoder returned nil for kmsgrab codec")
+		return errors.New("video: FindDecoder returned nil for x11grab codec")
 	}
 
 	s.decodeCodecContext = astiav.AllocCodecContext(decodeCodec)
@@ -258,7 +212,7 @@ func (s *kmsgrabStreamer) initKmsgrab() error {
 
 // freeInputDecode releases the input and decode objects. Safe to call when
 // partially initialized. The filter/encode objects are owned by s.enc.
-func (s *kmsgrabStreamer) freeInputDecode() {
+func (s *x11grabStreamer) freeInputDecode() {
 	if s.decodeCodecContext != nil {
 		s.decodeCodecContext.Free()
 		s.decodeCodecContext = nil
@@ -278,11 +232,13 @@ func (s *kmsgrabStreamer) freeInputDecode() {
 	}
 }
 
-// captureLoop is the main capture/encode loop. kmsgrab paces ReadFrame at the
-// configured frame rate, so no extra ticker is needed.
-func (s *kmsgrabStreamer) captureLoop() {
+// captureLoop is the main capture/encode loop. It mirrors the kmsgrab loop:
+// read a packet, decode it to a software frame, run it through the encoder's
+// filter graph (which uploads to a hardware encoder when needed), encode, and
+// write H264 samples to the track.
+func (s *x11grabStreamer) captureLoop() {
 	defer close(s.done)
-	defer log.Printf("video: kmsgrab capture goroutine exited (%d frames written)", atomic.LoadUint64(&s.framesWritten))
+	defer log.Printf("video: x11grab capture goroutine exited (%d frames written)", atomic.LoadUint64(&s.framesWritten))
 
 	frameDuration := time.Duration(float64(time.Second) / float64(s.cfg.FrameRate))
 	// Emit a stats line roughly every 10s.
@@ -305,8 +261,6 @@ func (s *kmsgrabStreamer) captureLoop() {
 				log.Printf("video: capture end of stream")
 				return
 			}
-			// Transient read errors (e.g. DRM page-flip timing) are logged and
-			// skipped rather than fatal.
 			log.Printf("video: read frame error: %v", err)
 			continue
 		}
@@ -376,8 +330,6 @@ func (s *kmsgrabStreamer) captureLoop() {
 						break
 					}
 
-					// Write H264 (Annex B, as produced by h264_vaapi without a
-					// global header) to the WebRTC track.
 					if err := s.track.WriteSample(media.Sample{
 						Data:     s.enc.encodePacket.Data(),
 						Duration: frameDuration,

@@ -42,8 +42,8 @@ var staticFS embed.FS
 var version string
 
 // videoEnabled is the startup decision about whether to attempt desktop
-// video streaming for this run. It is computed in main from --no-video and
-// the CAP_SYS_ADMIN check, and read by signalHandler.
+// video streaming for this run. It is computed in main from --video-source
+// and the CAP_SYS_ADMIN check, and read by signalHandler.
 var videoEnabled bool
 
 var upgrader = websocket.Upgrader{
@@ -53,12 +53,13 @@ var upgrader = websocket.Upgrader{
 var cli struct {
 	Port int `arg:"-p,--port" default:"8080" help:"HTTPS listen port"`
 
-	VideoSource string `arg:"--video-source" default:"kmsgrab" help:"desktop video capture source: \"kmsgrab\" (VAAPI DRM capture, default) or \"none\" to disable video"`
-	VideoCard   string `arg:"--video-card" default:"" help:"DRM card to capture (e.g. /dev/dri/card1); empty auto-detects"`
-	VideoFps    int    `arg:"--video-fps" default:"30" help:"video capture frame rate"`
-	VideoQP     int    `arg:"--video-qp" default:"24" help:"h264_vaapi constant-quality QP"`
-	VideoWidth  int    `arg:"--video-width" default:"0" help:"cap video output width; 0 native (reserved for future)"`
-	LowPower    int    `arg:"--low-power" default:"0" help:"h264_vaapi low-power mode (0 or 1)"`
+	VideoSource  string `arg:"--video-source" default:"kmsgrab" help:"desktop video capture source: \"kmsgrab\" (DRM, default), \"x11grab\" (X server), or \"none\" to disable video"`
+	VideoEncoder string `arg:"--video-encoder" default:"" help:"video H264 encoder: vaapi, nvenc, libx264, or auto (default: nvenc on NVIDIA, else vaapi, else libx264)"`
+	VideoCard    string `arg:"--video-card" default:"" help:"DRM card to capture (e.g. /dev/dri/card1); empty auto-detects"`
+	VideoFps     int    `arg:"--video-fps" default:"30" help:"video capture frame rate"`
+	VideoQP      int    `arg:"--video-qp" default:"24" help:"encoder quality (h264_vaapi/nvenc QP or libx264 CRF; lower is higher quality)"`
+	VideoWidth   int    `arg:"--video-width" default:"0" help:"cap video output width; 0 native"`
+	LowPower     int    `arg:"--low-power" default:"0" help:"h264_vaapi low-power mode (0 or 1); ignored for other encoders"`
 
 	NoTabletKeepalive bool `arg:"--no-tablet-keepalive" default:"false" help:"disable the tablet hover keep-alive (Mutter cooldown workaround); use on compositors without the cooldown (e.g. wlroots) so the mouse is not grabbed while idle"`
 }
@@ -169,12 +170,34 @@ func main() {
 		}
 	}
 
+	if video.NvidiaGPU() && cli.VideoSource == "kmsgrab" {
+		// kmsgrab decodes DRM frames and feeds them to VAAPI via hwmap. NVIDIA
+		// systems typically have no VAAPI, so the kmsgrab pipeline usually
+		// cannot capture there; x11grab (or a future nvenc/ddagrab path) is the
+		// right choice. Warn but proceed: the per-connection attempt will fail
+		// gracefully if VAAPI really is missing.
+		log.Printf("warning: --video-source=kmsgrab on an NVIDIA system: kmsgrab relies on VAAPI, which is usually unavailable on NVIDIA, so desktop video may fail. Consider --video-source x11grab.")
+	}
+	if isWaylandSession() && cli.VideoSource == "x11grab" {
+		// x11grab talks to the X server (XWayland under a Wayland session), so
+		// it can only capture X11/XWayland content; native Wayland surfaces are
+		// invisible to it and may appear as a black screen. kmsgrab captures
+		// the DRM framebuffer directly and is the better choice on Wayland.
+		log.Printf("warning: --video-source=x11grab on a Wayland session: x11grab captures the X server (XWayland), so it will likely capture only X11 windows or a black screen rather than native Wayland surfaces. Consider --video-source kmsgrab.")
+	}
+
 	if videoEnabled {
-		log.Printf("desktop video streaming enabled (source=%s, VAAPI/kmsgrab)", cli.VideoSource)
-		if cli.VideoCard != "" {
-			log.Printf("  capture card: %s", cli.VideoCard)
-		} else {
-			log.Printf("  capture card: auto-detect")
+		enc := cli.VideoEncoder
+		if enc == "" {
+			enc = "auto"
+		}
+		log.Printf("desktop video streaming enabled (source=%s, encoder=%s)", cli.VideoSource, enc)
+		if cli.VideoSource == "kmsgrab" {
+			if cli.VideoCard != "" {
+				log.Printf("  capture card: %s", cli.VideoCard)
+			} else {
+				log.Printf("  capture card: auto-detect")
+			}
 		}
 		log.Printf("  fps=%d qp=%d low-power=%d", cli.VideoFps, cli.VideoQP, cli.LowPower)
 	} else if cli.VideoSource == "none" {
@@ -334,6 +357,7 @@ func signalHandler(w http.ResponseWriter, r *http.Request, pad trackpad.Device, 
 			if videoEnabled && hasVideoMedia(msg.SDP) && videoStreamer == nil {
 				vs, err := video.New(video.Config{
 					Source:    cli.VideoSource,
+					Encoder:   cli.VideoEncoder,
 					CardPath:  cli.VideoCard,
 					MaxWidth:  cli.VideoWidth,
 					FrameRate: cli.VideoFps,
@@ -513,6 +537,21 @@ func certFingerprint(path string) (string, error) {
 // pipeline before answering.
 func hasVideoMedia(sdp string) bool {
 	return strings.Contains(sdp, "m=video")
+}
+
+// isWaylandSession reports whether the current graphical session is Wayland.
+// x11grab only sees the X server (XWayland under Wayland), so on a Wayland
+// session it typically captures only X11 windows or a black screen; we warn
+// the user in that case. kmsgrab is unaffected (it reads the DRM framebuffer
+// directly).
+func isWaylandSession() bool {
+	if t := os.Getenv("XDG_SESSION_TYPE"); t == "wayland" {
+		return true
+	}
+	if os.Getenv("WAYLAND_DISPLAY") != "" {
+		return true
+	}
+	return false
 }
 
 func localIPs(add_brackets_ipv6 bool) []string {

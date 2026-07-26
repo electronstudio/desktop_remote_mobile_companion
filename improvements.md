@@ -1,12 +1,18 @@
 # Improvements (future work)
 
-## Video capture fallback
+## Video capture / encoder selection
 
-- Software fallback path for machines without a VAAPI-capable GPU: `x11grab`
-  (or `x11grab` via `pipewire`/`dmabuf`) as the capture source plus `libx264`
-  software encoder, replacing the kmsgrab + h264_vaapi pipeline. Detect VAAPI
-  availability at runtime and fall back automatically, or add a
-  `--video-encoder {vaapi,x264}` flag.
+- Implemented: the `--video-source` flag selects the capture backend
+  (`kmsgrab` or `x11grab` on Linux), and `--video-encoder` selects the H264
+  encoder (`h264_vaapi`, `h264_nvenc`, `libx264`, or `auto`). The encoder axis
+  is shared across sources in `video/encoder.go`; `x11grab` pairs with any
+  encoder (libx264 software, or vaapi/nvenc via `hwupload`). Auto-encoder
+  falls back to `libx264` when no hardware encoder is available.
+- Still future: **automatic** kmsgrab→x11grab fallback when the chosen source
+  fails at runtime (today the user picks the source manually; a failed
+  attempt degrades to no-video rather than retrying the other source).
+- Still future: a **Windows ddagrab** capture backend (`video_windows.go` is a
+  not-yet-implemented stub; on Windows video is disabled until it lands).
 
 ## Adaptive framerate
 

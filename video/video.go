@@ -12,10 +12,17 @@ import (
 // use the subset they support.
 type Config struct {
 	// Source selects the capture backend. "kmsgrab" (the default, "") uses the
-	// Linux kmsgrab DRM + VAAPI pipeline; "none" disables video and is handled
-	// by the caller (New is never called with it). Unknown values are rejected
-	// by New with an error.
+	// Linux kmsgrab DRM pipeline; "x11grab" captures the X server; "none"
+	// disables video and is handled by the caller (New is never called with
+	// it). On Windows the source is always ddagrab regardless of this value.
+	// Unknown values are rejected by the platform newStreamer with an error.
 	Source string
+
+	// Encoder selects the H264 encoder family. "" or "auto" (the default)
+	// resolves to h264_nvenc on NVIDIA systems (except kmsgrab, which cannot
+	// feed nvenc), else h264_vaapi if available, else libx264. The explicit
+	// values "vaapi", "nvenc", and "libx264" are also accepted.
+	Encoder string
 
 	// CardPath is the DRM card to capture from (e.g. "/dev/dri/card1").
 	// Empty means auto-detect the first /dev/dri/card* device.
@@ -61,12 +68,11 @@ type Streamer interface {
 // /dev/dri, or the platform has no implementation); the caller should continue
 // without a video track.
 func New(cfg Config) (Streamer, error) {
-	switch cfg.Source {
-	case "", "kmsgrab":
-		return newStreamer(cfg)
-	case "none":
+	if cfg.Source == "none" {
 		return nil, fmt.Errorf("video: source %q disables video; the caller should not call New", cfg.Source)
-	default:
-		return nil, fmt.Errorf("video: unsupported capture source %q", cfg.Source)
 	}
+	// Source and encoder validation/dispatch is platform-specific: Linux
+	// routes kmsgrab/x11grab to their backends (rejecting unknown sources);
+	// Windows always uses ddagrab regardless of the requested source.
+	return newStreamer(cfg)
 }
