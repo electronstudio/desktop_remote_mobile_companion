@@ -1,3 +1,5 @@
+//go:build linux
+
 package trackpad
 
 import (
@@ -23,7 +25,7 @@ func TestDevicePointerMotion(t *testing.T) {
 	}
 	defer d.Close()
 
-	fmt.Printf("EVENTPATH %s\n", d.tp.EventPath())
+	fmt.Printf("EVENTPATH %s\n", d.(*device).tp.EventPath())
 	time.Sleep(3 * time.Second)
 
 	if err := d.ProcessEvent(input.Event{Type: "touchstart", T: []input.Touch{{ID: 1, X: 0.5, Y: 0.5}}}); err != nil {
@@ -59,7 +61,7 @@ func TestDeviceEmitsEvents(t *testing.T) {
 	}
 	defer d.Close()
 
-	fmt.Printf("EVENTPATH %s\n", d.tp.EventPath())
+	fmt.Printf("EVENTPATH %s\n", d.(*device).tp.EventPath())
 
 	// Give time for a human observer to attach evtest to the printed path.
 	time.Sleep(3 * time.Second)

@@ -1,21 +1,19 @@
 //go:build windows
 
-// Package video captures the Linux desktop via the kmsgrab DRM demuxer,
-// scales/converts it with VAAPI, encodes it to H264 with the h264_vaapi
-// hardware encoder, and writes the H264 samples to a Pion WebRTC track so
-// they can be streamed to the mobile client.
+// Package video captures the desktop via the kmsgrab DRM demuxer, scales/
+// converts it with VAAPI, encodes it to H264 with the h264_vaapi hardware
+// encoder, and writes the H264 samples to a Pion WebRTC track so they can be
+// streamed to the mobile client.
 //
-// The pipeline mirrors the ffmpeg command:
+// This file is the Windows backend. The cross-platform Streamer interface,
+// Config, and New constructor live in video.go.
 //
-//	ffmpeg -device /dev/dri/card0 -f kmsgrab -i - \
-//	    -vf 'hwmap=derive_device=vaapi,scale_vaapi=format=nv12' \
-//	    -c:v h264_vaapi -qp 24 -bf 0 -
-//
-// Only VAAPI-capable systems are supported. A software fallback (x11grab +
-// libx264) is tracked in improvements.md.
-//
-// If New returns an error (no VAAPI, no kmsgrab, no /dev/dri), the caller
-// should simply continue without a video track; trackpad/tablet keep working.
+// NOTE: This is a temporary copy of the Linux kmsgrab/VAAPI pipeline and does
+// NOT build/run on Windows yet (kmsgrab/VAAPI are Linux-only). It is kept here
+// so the Windows build path is structurally complete; it will be replaced with
+// a Windows-native capture backend (e.g. DXGI Desktop Duplication) in a later
+// change. On a Windows machine the cross-compiled go-astiav dependency is also
+// required to build this file.
 package video
 
 import (
@@ -33,34 +31,13 @@ import (
 	"github.com/pion/webrtc/v4/pkg/media"
 )
 
-// Config configures the capture pipeline.
-type Config struct {
-	// CardPath is the DRM card to capture from (e.g. "/dev/dri/card1").
-	// Empty means auto-detect the first /dev/dri/card* device.
-	CardPath string
-
-	// MaxWidth caps the output width; 0 means capture at native resolution.
-	MaxWidth int
-
-	// FrameRate is the capture/push frame rate in fps. 30 is a sensible
-	// default; using the desktop's native frame rate is future work.
-	FrameRate int
-
-	// QP is the h264_vaapi constant-quality quantization parameter (0-52,
-	// lower is higher quality). 24 is a good default.
-	QP int
-
-	// LowPower selects h264_vaapi low-power mode (0 = off, 1 = on). On means
-	// the encoder uses the fixed-function encode engine, which is faster and
-	// uses less GPU but may have slightly lower quality / fewer features.
-	LowPower int
-}
-
-// Streamer owns the capture + encode pipeline and the Pion H264 track that
-// receives the encoded samples.
-type Streamer struct {
+// streamer owns the capture + encode pipeline and the Pion H264 track that
+// receives the encoded samples. It is the Windows backend and implements the
+// video.Streamer interface. (See the file docstring: the kmsgrab/VAAPI body is
+// a temporary placeholder pending a Windows-native backend.)
+type streamer struct {
 	cfg   Config
-	Track *webrtc.TrackLocalStaticSample
+	track *webrtc.TrackLocalStaticSample
 
 	stop chan struct{}
 	done chan struct{}
@@ -91,12 +68,13 @@ type Streamer struct {
 	encodePacket       *astiav.Packet
 }
 
-// New builds the kmsgrab + VAAPI pipeline and the H264 track, but does not
-// start pushing frames yet. Call Start to begin streaming.
+// newStreamer builds the kmsgrab + VAAPI pipeline and the H264 track, but
+// does not start pushing frames yet. Call Start to begin streaming. It is the
+// platform-specific constructor called by the cross-platform New in video.go.
 //
 // A non-nil error means the system cannot capture (no VAAPI, no kmsgrab, no
 // /dev/dri); the caller should continue without video.
-func New(cfg Config) (*Streamer, error) {
+func newStreamer(cfg Config) (*streamer, error) {
 	if cfg.FrameRate <= 0 {
 		cfg.FrameRate = 30
 	}
@@ -122,9 +100,9 @@ func New(cfg Config) (*Streamer, error) {
 		return nil, fmt.Errorf("video: create track: %w", err)
 	}
 
-	s := &Streamer{
+	s := &streamer{
 		cfg:   cfg,
-		Track: track,
+		track: track,
 		stop:  make(chan struct{}),
 		done:  make(chan struct{}),
 	}
@@ -144,16 +122,20 @@ func New(cfg Config) (*Streamer, error) {
 	return s, nil
 }
 
-// Start launches the capture/encode goroutine writing H264 samples to Track.
-// It returns immediately. The goroutine runs until Stop is called.
-func (s *Streamer) Start() {
+// Start launches the capture/encode goroutine writing H264 samples to the
+// track returned by Track. It returns immediately. The goroutine runs until
+// Stop is called.
+func (s *streamer) Start() {
 	log.Printf("video: starting capture/encode goroutine")
 	go s.captureLoop()
 }
 
+// Track returns the H264 WebRTC track the encoded samples are written to.
+func (s *streamer) Track() *webrtc.TrackLocalStaticSample { return s.track }
+
 // Stop signals the capture goroutine to stop and frees all astiav resources.
 // It is safe to call multiple times.
-func (s *Streamer) Stop() {
+func (s *streamer) Stop() {
 	select {
 	case <-s.stop:
 		// already stopped
@@ -191,7 +173,7 @@ func autoDetectCard() (string, error) {
 }
 
 // initKmsgrab opens the kmsgrab input device and prepares the decoder.
-func (s *Streamer) initKmsgrab() error {
+func (s *streamer) initKmsgrab() error {
 	s.inputFormatContext = astiav.AllocFormatContext()
 	if s.inputFormatContext == nil {
 		return errors.New("video: alloc input format context")
@@ -259,7 +241,7 @@ func (s *Streamer) initKmsgrab() error {
 
 // initFilterGraph lazily builds the hwmap + scale_vaapi filter graph the first
 // time a decoded hardware frame is available.
-func (s *Streamer) initFilterGraph() error {
+func (s *streamer) initFilterGraph() error {
 	if s.filterGraph != nil {
 		return nil
 	}
@@ -338,7 +320,7 @@ func (s *Streamer) initFilterGraph() error {
 
 // initVideoEncoding lazily opens the h264_vaapi encoder once a filtered
 // (NV12 VAAPI) frame is available.
-func (s *Streamer) initVideoEncoding() error {
+func (s *streamer) initVideoEncoding() error {
 	if s.encodeCodecContext != nil {
 		return nil
 	}
@@ -390,7 +372,7 @@ func (s *Streamer) initVideoEncoding() error {
 
 // freeVideoCoding releases all astiav objects. Safe to call when partially
 // initialized.
-func (s *Streamer) freeVideoCoding() {
+func (s *streamer) freeVideoCoding() {
 	if s.encodeCodecContext != nil {
 		s.encodeCodecContext.Free()
 		s.encodeCodecContext = nil
@@ -429,7 +411,7 @@ func (s *Streamer) freeVideoCoding() {
 // captureLoop is the main capture/encode loop, ported from the reference
 // example. kmsgrab paces ReadFrame at the configured frame rate, so no extra
 // ticker is needed.
-func (s *Streamer) captureLoop() {
+func (s *streamer) captureLoop() {
 	defer close(s.done)
 	defer log.Printf("video: capture goroutine exited (%d frames written)", atomic.LoadUint64(&s.framesWritten))
 
@@ -527,7 +509,7 @@ func (s *Streamer) captureLoop() {
 
 					// Write H264 (Annex B, as produced by h264_vaapi without a
 					// global header) to the WebRTC track.
-					if err := s.Track.WriteSample(media.Sample{
+					if err := s.track.WriteSample(media.Sample{
 						Data:     s.encodePacket.Data(),
 						Duration: frameDuration,
 					}); err != nil {

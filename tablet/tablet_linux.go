@@ -3,6 +3,9 @@
 // Package tablet creates a virtual Linux graphics tablet via uinput and maps
 // browser touch events to absolute screen coordinates.
 //
+// This file is the Linux (uinput) backend. The cross-platform Device
+// interface and New constructor live in tablet.go.
+//
 // The device mimics a real pen tablet (like a Wacom Intuos or Surface Pen):
 // touching the surface is a pen-tip contact (the cursor follows and the
 // application draws, with live pressure and tilt forwarded from the
@@ -48,6 +51,7 @@ const (
 	// at tipFloor while the tip is down: once down, the reported pressure is
 	// never allowed below tipFloor until the pen lifts. tipFloor sits above
 	// libinput's ~5% (205) default threshold so the tip stays logically down.
+	// TODO: test if this is still necessary
 	tipFloor = 256 // emitted-pressure floor while tip is down (>= libinput ~5% of 4096)
 
 	// libinput has a "no-proximity-out" quirk: for tablet tools that go silent
@@ -62,13 +66,13 @@ const (
 	// until the next touch. keepAlivePeriod is how often we re-emit the current
 	// hover frame while the tool is in range and not tipping, keeping the tool
 	// "alive" so libinput's quirk timer never fires and Mutter never sees a
-	// proximity-out->in. The ticker runs only while hovering; it stops on
-	// tip-down, on a real lift, and on disconnect.
+	// proximity-out->in.
 	keepAlivePeriod = 15 * time.Millisecond
 )
 
-// Device is a virtual single-touch graphics tablet.
-type Device struct {
+// device is a virtual single-touch graphics tablet (the Linux uinput
+// backend). It implements the tablet.Device interface.
+type device struct {
 	vd          virtual_device.VirtualDevice
 	mu          sync.Mutex
 	inRange     bool
@@ -82,13 +86,17 @@ type Device struct {
 	tiltY       int32 // degrees, tiltMin..tiltMax
 }
 
-// New creates and registers a virtual graphics tablet. When keepAlive is
-// true the server keeps the tool artificially in proximity between strokes
-// (see keepAlivePeriod), working around a GNOME/Mutter (Wayland) cooldown that
-// drops strokes after a proximity-out. It also keeps the cursor grabbed while
-// the tablet panel is active; pass false on compositors without that
-// cooldown (e.g. wlroots) to avoid the perpetual hover and let the mouse work.
-func New(keepAlive bool) (*Device, error) {
+// newDevice creates and registers a virtual graphics tablet (the Linux
+// uinput backend) and returns it as a Device. It is the platform-specific
+// constructor called by the cross-platform New in tablet.go.
+//
+// When keepAlive is true the server keeps the tool artificially in proximity
+// between strokes (see keepAlivePeriod), working around a GNOME/Mutter
+// (Wayland) cooldown that drops strokes after a proximity-out. It also keeps
+// the cursor grabbed while the tablet panel is active; pass false on
+// compositors without that cooldown (e.g. wlroots) to avoid the perpetual
+// hover and let the mouse work.
+func newDevice(keepAlive bool) (Device, error) {
 	vd := virtual_device.NewVirtualDevice().
 		WithBusType(linux.BUS_VIRTUAL).
 		WithVendor(0x1234).
@@ -119,16 +127,23 @@ func New(keepAlive bool) (*Device, error) {
 		return nil, fmt.Errorf("register virtual tablet: %w", err)
 	}
 
-	return &Device{vd: vd, keepAliveOn: keepAlive}, nil
+	return &device{vd: vd, keepAliveOn: keepAlive}, nil
+}
+
+// newTestDevice builds a tablet.device wired to a fake VirtualDevice,
+// bypassing newDevice()/Register() so tests need no /dev/uinput. It is the
+// test-only constructor used by tablet_linux_test.go.
+func newTestDevice(vd virtual_device.VirtualDevice, keepAlive bool) *device {
+	return &device{vd: vd, keepAliveOn: keepAlive}
 }
 
 // Close unregisters the virtual device.
-func (d *Device) Close() error {
+func (d *device) Close() error {
 	return d.vd.Unregister()
 }
 
 // ProcessEvent applies a browser event to the virtual tablet.
-func (d *Device) ProcessEvent(ev input.Event) error {
+func (d *device) ProcessEvent(ev input.Event) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
@@ -183,7 +198,7 @@ func (d *Device) ProcessEvent(ev input.Event) error {
 			d.emitHover()
 			d.armKeepAlive()
 		}
-	case "buttondown", "buttonup":
+	case "buttondown", "buttonup": // TODO do we still need these?
 		btn, ok := buttonMap(ev.Button)
 		if !ok {
 			return fmt.Errorf("unknown button: %q", ev.Button)
@@ -229,7 +244,7 @@ func (d *Device) ProcessEvent(ev input.Event) error {
 // proximityIn brings the tool into range and sends a complete hover frame
 // (with SyncReport) so the compositor processes proximity-in before any
 // subsequent tip/button frame.
-func (d *Device) proximityIn() {
+func (d *device) proximityIn() {
 	d.vd.SendMiscEvent(linux.MSC_SERIAL, toolSerial)
 	d.vd.Send(uint16(linux.EV_ABS), uint16(linux.ABS_MISC), 0)
 	d.vd.PressButton(linux.BTN_TOOL_PEN)
@@ -243,7 +258,7 @@ func (d *Device) proximityIn() {
 	d.inRange = true
 }
 
-func (d *Device) proximityOut() {
+func (d *device) proximityOut() {
 	d.stopKeepAlive()
 	if d.tipDown {
 		// Safety: ensure the tip is released before the tool leaves range.
@@ -260,7 +275,7 @@ func (d *Device) proximityOut() {
 // BTN_TOUCH=1. The emitted pressure is the pen's reported pressure floored
 // at tipFloor (see tipPressure), so even a very light/zero first sample
 // crosses libinput's tip threshold and the stroke starts immediately.
-func (d *Device) dropTip() {
+func (d *device) dropTip() {
 	if d.tipDown {
 		return
 	}
@@ -276,7 +291,7 @@ func (d *Device) dropTip() {
 // fresh TIP_DOWN; otherwise the new stroke would be invisible until the user
 // lifted and re-touched. It then brings the tool into proximity (if not
 // already) and drops the tip.
-func (d *Device) beginStroke() {
+func (d *device) beginStroke() {
 	if d.inRange && d.tipDown {
 		d.liftTip()
 	}
@@ -305,7 +320,7 @@ func (d *Device) beginStroke() {
 // connection's first stroke does a fresh proximity-in + tip-down; being a
 // lone first stroke (not rapid after a recent one) it does not hit Mutter's
 // cooldown.
-func (d *Device) Reset() {
+func (d *device) Reset() {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.stopKeepAlive()
@@ -323,7 +338,7 @@ func (d *Device) Reset() {
 // (proximity-out) so the system mouse works again while the user is not
 // drawing. On true nothing is done — the next touch does a fresh proximity-in,
 // which (being a lone first stroke) the compositor handles.
-func (d *Device) SetActive(active bool) {
+func (d *device) SetActive(active bool) {
 	if !active {
 		d.Reset()
 	}
@@ -337,7 +352,7 @@ func (d *Device) SetActive(active bool) {
 // multi-second Mutter cooldown that follows. It is a no-op if the tip is
 // down or the tool is out of range. Calling it again (e.g. on each hover
 // pointermove) just resets the timer.
-func (d *Device) armKeepAlive() {
+func (d *device) armKeepAlive() {
 	if !d.keepAliveOn || !d.inRange || d.tipDown {
 		d.stopKeepAlive()
 		return
@@ -364,7 +379,7 @@ func (d *Device) armKeepAlive() {
 
 // stopKeepAlive cancels the hover keep-alive ticker (e.g. on tip-down, on a
 // real lift, or on disconnect). It is safe to call when no ticker is armed.
-func (d *Device) stopKeepAlive() {
+func (d *device) stopKeepAlive() {
 	if d.keepAlive != nil {
 		d.keepAlive.Stop()
 		d.keepAlive = nil
@@ -374,7 +389,7 @@ func (d *Device) stopKeepAlive() {
 // liftTip lifts the pen tip off the surface: BTN_TOUCH=0, back to a hover
 // frame (distance=hoverDist, pressure=0). The caller is responsible for
 // (re)arming the keep-alive ticker if the pen should keep hovering.
-func (d *Device) liftTip() {
+func (d *device) liftTip() {
 	if !d.tipDown {
 		return
 	}
@@ -388,7 +403,7 @@ func (d *Device) liftTip() {
 // non-zero hover pressure (e.g. a touch pointer's synthetic 0.5) makes
 // libinput cross its tip-down threshold and fire spurious TIP_DOWN events,
 // so hover pressure is forced to 0 regardless of what the browser reports.
-func (d *Device) emitHover() {
+func (d *device) emitHover() {
 	d.emitFrame(hoverDist, 0, 0, 0)
 }
 
@@ -403,7 +418,7 @@ func (d *Device) emitHover() {
 // keeps the tool in proximity, but the change guarantees a real event each
 // tick. (We nudge distance rather than x/y/tilt so the on-screen cursor stays
 // put.)
-func (d *Device) emitKeepAlive(toggle bool) {
+func (d *device) emitKeepAlive(toggle bool) {
 	dist := int32(hoverDist)
 	if toggle {
 		dist = hoverDist + 1
@@ -412,7 +427,7 @@ func (d *Device) emitKeepAlive(toggle bool) {
 }
 
 // emitFrame sends a complete axis frame with an optional button change.
-func (d *Device) emitFrame(distance, press int32, btn linux.Button, btnVal int32) {
+func (d *device) emitFrame(distance, press int32, btn linux.Button, btnVal int32) {
 	d.vd.SendAbsoluteEvent(linux.ABS_X, d.x)
 	d.vd.SendAbsoluteEvent(linux.ABS_Y, d.y)
 	d.vd.SendAbsoluteEvent(linux.ABS_DISTANCE, distance)
@@ -429,7 +444,7 @@ func (d *Device) emitFrame(distance, press int32, btn linux.Button, btnVal int32
 // browser touch sample. Absent pressure is treated as 0 (hover); absent tilt
 // as 0 degrees. This keeps "not reported" distinguishable from a real zero
 // (see the input.Touch docs) at the protocol boundary.
-func (d *Device) setPen(t input.Touch) {
+func (d *device) setPen(t input.Touch) {
 	d.x = int32(t.X * float64(axisMax))
 	d.y = int32(t.Y * float64(axisMax))
 	if t.Pressure != nil {
@@ -454,7 +469,7 @@ func (d *Device) setPen(t input.Touch) {
 // On the down transition itself we use the pen's real pressure if it is
 // already above the floor, otherwise the floor, so the tip-down event
 // crosses the threshold immediately.
-func (d *Device) tipPressure() int32 {
+func (d *device) tipPressure() int32 {
 	if d.pressure > tipFloor {
 		return d.pressure
 	}

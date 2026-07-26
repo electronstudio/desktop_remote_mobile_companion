@@ -1,7 +1,7 @@
 //go:build windows
 
-// Package tablet is a Windows stub. It implements the same Device API as the
-// Linux uinput backend, but does not yet inject any input.
+// Package tablet is a Windows stub. It implements the same Device interface
+// as the Linux uinput backend, but does not yet inject any input.
 package tablet
 
 // TODO: Implement Windows tablet via synthetic pen injection
@@ -23,17 +23,30 @@ import (
 	"github.com/electronstudio/desktop_remote_mobile_companion/input"
 )
 
-// Device is a placeholder Windows graphics tablet implementation.
-type Device struct{}
+// Compile-time interface satisfaction check.
+var _ Device = (*device)(nil)
 
-// New creates a placeholder graphics tablet device.
-func New() (*Device, error) {
-	return &Device{}, nil
+// device is a placeholder Windows graphics tablet implementation. It
+// implements the tablet.Device interface but injects nothing.
+type device struct{}
+
+// newDevice creates a placeholder graphics tablet device (Windows backend)
+// and returns it as a Device. keepAlive is accepted for API parity with the
+// Linux backend but has no effect. It is the platform-specific constructor
+// called by the cross-platform New in tablet.go.
+func newDevice(keepAlive bool) (Device, error) {
+	return &device{}, nil
 }
 
 // Close is a no-op.
-func (d *Device) Close() error { return nil }
+func (d *device) Close() error { return nil }
 
 // ProcessEvent ignores the event. Windows pen/tablet injection is not yet
 // implemented.
-func (d *Device) ProcessEvent(ev input.Event) error { return nil }
+func (d *device) ProcessEvent(ev input.Event) error { return nil }
+
+// SetActive is a no-op; there is no tool state to release on Windows.
+func (d *device) SetActive(active bool) {}
+
+// Reset is a no-op; there is no tool state to release on Windows.
+func (d *device) Reset() {}

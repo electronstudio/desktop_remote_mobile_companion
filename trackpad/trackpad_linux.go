@@ -2,6 +2,9 @@
 
 // Package trackpad creates a virtual Linux multitouch trackpad via uinput
 // and maps browser touch events to kernel input events.
+//
+// This file is the Linux (uinput) backend. The cross-platform Device interface
+// and New constructor live in trackpad.go.
 package trackpad
 
 import (
@@ -21,8 +24,9 @@ const (
 	resolution = 80 // ~102mm physical touchpad size, realistic units/mm
 )
 
-// Device is a virtual multitouch trackpad.
-type Device struct {
+// device is a virtual multitouch trackpad (the Linux uinput backend). It
+// implements the trackpad.Device interface.
+type device struct {
 	tp       touchpad.VirtualTouchpad
 	mu       sync.Mutex
 	active   map[int]touchpad.TouchSlot // browser touch id -> slot state
@@ -30,8 +34,10 @@ type Device struct {
 	touching bool                       // at least one contact is currently down
 }
 
-// New creates and registers a virtual multitouch trackpad.
-func New() (*Device, error) {
+// newDevice creates and registers a virtual multitouch trackpad (the Linux
+// uinput backend) and returns it as a Device. It is the platform-specific
+// constructor called by the cross-platform New in trackpad.go.
+func newDevice() (Device, error) {
 	vd := virtual_device.NewVirtualDevice().
 		WithBusType(linux.BUS_USB).
 		WithVendor(0x1234).
@@ -70,7 +76,7 @@ func New() (*Device, error) {
 		return nil, fmt.Errorf("register virtual trackpad: %w", err)
 	}
 
-	d := &Device{
+	d := &device{
 		tp:     tp,
 		active: make(map[int]touchpad.TouchSlot),
 	}
@@ -78,12 +84,12 @@ func New() (*Device, error) {
 }
 
 // Close unregisters the virtual device.
-func (d *Device) Close() error {
+func (d *device) Close() error {
 	return d.tp.Unregister()
 }
 
 // ProcessEvent applies a browser touch event to the virtual trackpad.
-func (d *Device) ProcessEvent(ev input.Event) error {
+func (d *device) ProcessEvent(ev input.Event) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
@@ -182,7 +188,7 @@ func (d *Device) ProcessEvent(ev input.Event) error {
 	return nil
 }
 
-func (d *Device) acquireSlot() (touchpad.TouchSlot, error) {
+func (d *device) acquireSlot() (touchpad.TouchSlot, error) {
 	for i := 0; i < maxSlots; i++ {
 		if !d.slots[i] {
 			d.slots[i] = true
@@ -192,7 +198,7 @@ func (d *Device) acquireSlot() (touchpad.TouchSlot, error) {
 	return touchpad.TouchSlot{}, fmt.Errorf("no free multitouch slots (max %d)", maxSlots)
 }
 
-func (d *Device) releaseSlot(slot int) {
+func (d *device) releaseSlot(slot int) {
 	if slot >= 0 && slot < maxSlots {
 		d.slots[slot] = false
 	}
@@ -203,7 +209,7 @@ func (d *Device) releaseSlot(slot int) {
 // disconnects so a subsequent client (or reconnect) does not inherit stuck
 // contacts from a stroke whose pointerup was lost (e.g. a dropped data
 // channel or a client that backgrounded the page mid-gesture).
-func (d *Device) Reset() {
+func (d *device) Reset() {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if len(d.active) == 0 && !d.touching {

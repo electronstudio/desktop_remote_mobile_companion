@@ -202,7 +202,7 @@ func main() {
 	log.Fatal(server.ListenAndServeTLS("", ""))
 }
 
-func signalHandler(w http.ResponseWriter, r *http.Request, pad *trackpad.Device, tabletDev *tablet.Device) {
+func signalHandler(w http.ResponseWriter, r *http.Request, pad trackpad.Device, tabletDev tablet.Device) {
 	ws, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Printf("websocket upgrade failed: %v", err)
@@ -235,7 +235,7 @@ func signalHandler(w http.ResponseWriter, r *http.Request, pad *trackpad.Device,
 	// videoStreamer holds the desktop capture pipeline for this connection.
 	// It is created only when the peer's offer contains a video media section
 	// and video is not disabled. It is nil otherwise.
-	var videoStreamer *video.Streamer
+	var videoStreamer video.Streamer
 
 	pc.OnDataChannel(func(dc *webrtc.DataChannel) {
 		log.Printf("data channel received from %s", r.RemoteAddr)
@@ -342,7 +342,7 @@ func signalHandler(w http.ResponseWriter, r *http.Request, pad *trackpad.Device,
 					log.Printf("video unavailable for %s: %v", r.RemoteAddr, err)
 					log.Printf("  if you do not need desktop video, run with --no-video to suppress this; if you do, make sure CAP_SYS_ADMIN is granted and a VAAPI-capable GPU is present")
 				} else {
-					if _, err := pc.AddTrack(vs.Track); err != nil {
+					if _, err := pc.AddTrack(vs.Track()); err != nil {
 						log.Printf("add video track failed for %s: %v", r.RemoteAddr, err)
 						vs.Stop()
 					} else {

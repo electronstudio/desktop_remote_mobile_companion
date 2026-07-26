@@ -11,7 +11,7 @@ import (
 )
 
 // fakeTouchpad is a no-op touchpad.VirtualTouchpad that records the calls the
-// trackpad.Device makes (Send and MultiTouch), so the slot bookkeeping can be
+// trackpad.device makes (Send and MultiTouch), so the slot bookkeeping can be
 // exercised without a real /dev/uinput device.
 type fakeTouchpad struct {
 	sends      []fakeSend
@@ -46,10 +46,10 @@ func (f *fakeTouchpad) Send(evType, code uint16, value int32) {
 }
 func (f *fakeTouchpad) EventPath() string { return "" }
 
-// newTestDevice builds a trackpad.Device wired to a fake touchpad, bypassing
+// newTestDevice builds a trackpad.device wired to a fake touchpad, bypassing
 // New()/Register() so tests need no /dev/uinput permissions.
-func newTestDevice(tp touchpad.VirtualTouchpad) *Device {
-	return &Device{tp: tp, active: make(map[int]touchpad.TouchSlot)}
+func newTestDevice(tp touchpad.VirtualTouchpad) *device {
+	return &device{tp: tp, active: make(map[int]touchpad.TouchSlot)}
 }
 
 func downEvent(id int, x, y float64) input.Event {
