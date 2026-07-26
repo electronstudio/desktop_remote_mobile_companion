@@ -71,10 +71,6 @@ type Streamer struct {
 	// goroutine.
 	framesWritten uint64 // used for stats logging
 
-	// encoderOpened / filterBuilt avoid re-logging one-time setup each frame.
-	encoderOpened bool
-	filterBuilt   bool
-
 	// astiav objects, allocated lazily.
 	inputFormatContext *astiav.FormatContext
 	decodeCodecContext *astiav.CodecContext

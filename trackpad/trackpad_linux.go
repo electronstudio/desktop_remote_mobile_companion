@@ -27,7 +27,6 @@ type Device struct {
 	mu       sync.Mutex
 	active   map[int]touchpad.TouchSlot // browser touch id -> slot state
 	slots    [maxSlots]bool             // true if slot is in use
-	slotID   [maxSlots]int              // slot -> browser id (-1 if free)
 	touching bool                       // at least one contact is currently down
 }
 
@@ -75,9 +74,6 @@ func New() (*Device, error) {
 		tp:     tp,
 		active: make(map[int]touchpad.TouchSlot),
 	}
-	for i := range d.slotID {
-		d.slotID[i] = -1
-	}
 	return d, nil
 }
 
@@ -96,11 +92,11 @@ func (d *Device) ProcessEvent(ev input.Event) error {
 	// Map pointer event names to the same lifecycle we used for touch events.
 	var action string
 	switch ev.Type {
-	case "touchstart", "pointerdown":
+	case "pointerdown":
 		action = "down"
-	case "touchmove", "pointermove":
+	case "pointermove":
 		action = "move"
-	case "touchend", "touchcancel", "pointerup", "pointercancel":
+	case "pointerup", "pointercancel":
 		action = "up"
 	case "buttondown", "buttonup":
 		// Button events are handled by the tablet device.
@@ -115,7 +111,7 @@ func (d *Device) ProcessEvent(ev input.Event) error {
 			slot, ok := d.active[t.ID]
 			if !ok {
 				var err error
-				slot, err = d.acquireSlot(t.ID)
+				slot, err = d.acquireSlot()
 				if err != nil {
 					return err
 				}
@@ -186,11 +182,10 @@ func (d *Device) ProcessEvent(ev input.Event) error {
 	return nil
 }
 
-func (d *Device) acquireSlot(browserID int) (touchpad.TouchSlot, error) {
+func (d *Device) acquireSlot() (touchpad.TouchSlot, error) {
 	for i := 0; i < maxSlots; i++ {
 		if !d.slots[i] {
 			d.slots[i] = true
-			d.slotID[i] = browserID
 			return touchpad.TouchSlot{Slot: i}, nil
 		}
 	}
@@ -200,7 +195,6 @@ func (d *Device) acquireSlot(browserID int) (touchpad.TouchSlot, error) {
 func (d *Device) releaseSlot(slot int) {
 	if slot >= 0 && slot < maxSlots {
 		d.slots[slot] = false
-		d.slotID[slot] = -1
 	}
 }
 

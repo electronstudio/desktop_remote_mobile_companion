@@ -133,7 +133,7 @@ func (d *Device) ProcessEvent(ev input.Event) error {
 	defer d.mu.Unlock()
 
 	switch ev.Type {
-	case "touchstart", "pointerdown":
+	case "pointerdown":
 		// Pen touches the surface: bring the tool into proximity (hover)
 		// then drop the tip (contact). The two-frame sequence matches a real
 		// tablet and lets the compositor process proximity-in before the
@@ -148,7 +148,7 @@ func (d *Device) ProcessEvent(ev input.Event) error {
 		}
 		d.setPen(ev.T[0])
 		d.beginStroke()
-	case "touchmove", "pointermove":
+	case "pointermove":
 		// Pen moved. While tipping, update axes with live pressure/tilt; while
 		// hovering, emit a hover frame and (re)arm the keep-alive so the tool
 		// does not go silent. (A move also resets the keep-alive timer.)
@@ -165,7 +165,7 @@ func (d *Device) ProcessEvent(ev input.Event) error {
 			d.emitHover()
 			d.armKeepAlive() // (re)arm: this move resets the silence timer
 		}
-	case "touchend", "touchcancel", "pointerup", "pointercancel":
+	case "pointerup", "pointercancel":
 		// Pen lifts off the surface: release the tip back to a hover frame but
 		// STAY in proximity. A real Wacom pen does not leave the tablet's
 		// sensing area between strokes; it keeps hovering and keeps streaming

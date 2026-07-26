@@ -35,46 +35,11 @@ d.y = input.DenormUni(float32(t.Y), 0, axisMax)
 
 ## B. Dead code & redundant abstractions
 
-### B1. `trackpad.Device.slotID` is write-only
-**File:** `trackpad/trackpad_linux.go` (fields `slotID [maxSlots]int`,
-plus writes in `New`, `acquireSlot`, `releaseSlot`).
-
-`slotID` is maintained as a "slot → browser id" reverse map but is **never
-read** anywhere. The `active map[int]TouchSlot` already tracks
-browser id → slot, and `releaseSlot` only needs the slot index (which the
-caller already has from `d.active[id].Slot`). This is pure dead state
-that must be kept consistent for no benefit.
-
-**Fix:** delete the `slotID` field and the three lines that touch it.
-`acquireSlot` simply returns `touchpad.TouchSlot{Slot: i}`; `releaseSlot`
-just clears `d.slots[slot]`.
-
-### B2. `video.Streamer.encoderOpened` and `filterBuilt` are unused
-**File:** `video/video_linux.go` (lines ~74-76).
-
-Both fields are declared with a comment saying they "avoid re-logging
-one-time setup each frame", but nothing ever reads or writes them
-(lazy init is guarded by `if s.filterGraph != nil` / `if s.encodeCodecContext != nil`
-instead). Dead fields.
-
-**Fix:** delete both fields and their doc comment.
 
 
 
-### B4. Legacy `touch*` event branches are unreachable
-**Files:** `trackpad/trackpad_linux.go` and `tablet/tablet_linux.go`
-(`ProcessEvent` type switches).
 
-Both devices accept `touchstart`, `touchmove`, `touchend`, `touchcancel`,
-but the browser client (`static/app.js`) only ever sends `pointerdown`,
-`pointermove`, `pointerup`, `pointercancel`, `buttondown`, `buttonup`
-(see AGENTS.md "Pointer events vs. touch events"). The `touch*` cases
-are dead defensive code that doubles the surface area of each switch.
 
-**Fix:** drop the `touch*` cases (or, if you genuinely want belt-and-
-braces robustness against a future client, keep *one* canonical mapping
-in the `input` package — see B5 — instead of duplicating the table in
-both devices).
 
 ### B5. Duplicated pointer-event → action mapping
 **Files:** `trackpad/trackpad_linux.go`, `tablet/tablet_linux.go`.
