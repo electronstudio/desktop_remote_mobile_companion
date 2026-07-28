@@ -110,6 +110,8 @@ func newX11grabStreamer(cfg Config) (*x11grabStreamer, error) {
 		return nil, err
 	}
 
+	CaptureWidth.Store(int64(s.decodeCodecContext.Width()))
+	CaptureHeight.Store(int64(s.decodeCodecContext.Height()))
 	log.Printf("video: capture source ready (%dx%d, pixfmt %s)", s.decodeCodecContext.Width(), s.decodeCodecContext.Height(), s.decodeCodecContext.PixelFormat().String())
 	return s, nil
 }
@@ -139,6 +141,8 @@ func (s *x11grabStreamer) Stop() {
 	<-s.done
 	s.freeInputDecode()
 	s.enc.free()
+	CaptureWidth.Store(0)
+	CaptureHeight.Store(0)
 	log.Printf("video: x11grab capture pipeline stopped")
 }
 

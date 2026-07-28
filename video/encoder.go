@@ -198,9 +198,18 @@ func newEncoder(cfg Config, kind sourceKind) (*encoder, error) {
 // initFilterGraph builds the filter graph the first time a decoded frame is
 // available. The graph description depends on both the source (hardware vs
 // software input frames) and the encoder (target device + required pixel
-// format). For software sources uploading to a hardware encoder, the
-// hardware device context is attached to the hwupload filter after the graph
-// is parsed (so the filter exists) and before it is configured.
+// format).
+//
+// For software sources uploading to a hardware encoder (x11grab + vaapi/nvenc)
+// the graph contains an hwupload filter whose init callback requires the
+// hardware device context to already be set. go-astiav's FilterGraph.Parse wraps
+// avfilter_graph_parse_ptr, which creates AND initializes the parsed filters in
+// one step, leaving no chance to set the device before hwupload's init (it fails
+// with "A hardware device reference is required to upload frames to."). So that
+// path uses parseFilterGraphWithDevice, which drives the segmented filtergraph
+// API manually and attaches the device between create and init, exactly like
+// FFmpeg's own fftools graph_parse(). Hardware sources (kmsgrab) and software
+// encoders (libx264) have no hwupload and keep using FilterGraph.Parse.
 func (e *encoder) initFilterGraph(decodeCodecContext *astiav.CodecContext, decodeFrame *astiav.Frame, videoStream *astiav.Stream) error {
 	if e.filterGraph != nil {
 		return nil
@@ -262,19 +271,16 @@ func (e *encoder) initFilterGraph(decodeCodecContext *astiav.CodecContext, decod
 	inputs.SetNext(nil)
 
 	filterDesc := e.filterGraphDesc(decodeCodecContext.Width())
-	if err := e.filterGraph.Parse(filterDesc, inputs, outputs); err != nil {
-		return fmt.Errorf("video: parse filter graph %q: %w", filterDesc, err)
-	}
-
-	// Software->hardware upload filters (hwupload) only exist after Parse;
-	// attach the device context we created to any filter that handles
-	// hardware devices before configuring.
 	if e.hwDeviceContext != nil {
-		for _, f := range e.filterGraph.Filters() {
-			if !f.Filter().Flags().Has(astiav.FilterFlagHardwareDevice) {
-				continue
-			}
-			f.SetHardwareDeviceContext(e.hwDeviceContext)
+		// Software source -> hardware encoder: the graph contains hwupload,
+		// which needs the device set before its init. Parse initializes too
+		// early, so use the segmented-API helper.
+		if err := parseFilterGraphWithDevice(e.filterGraph, filterDesc, inputs, outputs, e.hwDeviceContext); err != nil {
+			return fmt.Errorf("video: parse filter graph %q: %w", filterDesc, err)
+		}
+	} else {
+		if err := e.filterGraph.Parse(filterDesc, inputs, outputs); err != nil {
+			return fmt.Errorf("video: parse filter graph %q: %w", filterDesc, err)
 		}
 	}
 

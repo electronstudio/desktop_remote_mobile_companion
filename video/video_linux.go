@@ -136,6 +136,8 @@ func newKmsgrabStreamer(cfg Config) (*kmsgrabStreamer, error) {
 		return nil, err
 	}
 
+	CaptureWidth.Store(int64(s.decodeCodecContext.Width()))
+	CaptureHeight.Store(int64(s.decodeCodecContext.Height()))
 	log.Printf("video: capture source ready (%dx%d)", s.decodeCodecContext.Width(), s.decodeCodecContext.Height())
 	return s, nil
 }
@@ -165,6 +167,8 @@ func (s *kmsgrabStreamer) Stop() {
 	<-s.done
 	s.freeInputDecode()
 	s.enc.free()
+	CaptureWidth.Store(0)
+	CaptureHeight.Store(0)
 	log.Printf("video: kmsgrab capture pipeline stopped")
 }
 

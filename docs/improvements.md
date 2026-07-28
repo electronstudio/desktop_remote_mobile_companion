@@ -5,7 +5,7 @@
 - Implemented: the `--video-source` flag selects the capture backend
   (`kmsgrab` or `x11grab` on Linux), and `--video-encoder` selects the H264
   encoder (`h264_vaapi`, `h264_nvenc`, `libx264`, or `auto`). The encoder axis
-  is shared across sources in `video/encoder.go`; `x11grab` pairs with any
+  is shared across sources in `../video/encoder.go`; `x11grab` pairs with any
   encoder (libx264 software, or vaapi/nvenc via `hwupload`). Auto-encoder
   falls back to `libx264` when no hardware encoder is available.
 - Still future: **automatic** kmsgrab→x11grab fallback when the chosen source

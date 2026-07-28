@@ -4,8 +4,29 @@ package video
 
 import (
 	"fmt"
+	"sync/atomic"
 
 	"github.com/pion/webrtc/v4"
+)
+
+// CaptureWidth and CaptureHeight hold the native capture resolution of the
+// currently active video stream in pixels. They are set by a backend
+// constructor (synchronously, before New returns) once the capture source is
+// open, and reset to 0 when that stream stops. They are read/written
+// atomically so other modules can read them concurrently with the capture
+// goroutine. A value of 0 means no video stream is active (or its resolution
+// has not yet been detected).
+//
+// This is the capture (input) resolution — the size kmsgrab/x11grab read from
+// the desktop. The streamed (encoder output) resolution is the same unless
+// --video-width (Config.MaxWidth) caps it; that smaller size is only known
+// lazily on the first frame, so this global reports the capture size.
+//
+// One client at a time is active (kmsgrab is exclusive), so a single global is
+// sufficient; see AGENTS.md "One client at a time".
+var (
+	CaptureWidth  atomic.Int64
+	CaptureHeight atomic.Int64
 )
 
 // Config configures the capture pipeline. All fields are advisory; backends

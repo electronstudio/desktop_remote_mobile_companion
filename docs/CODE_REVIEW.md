@@ -10,7 +10,7 @@ Line numbers refer to the current tree.
 
 
 ### A2. Unclamped tablet coordinates can leave the axis range
-**File:** `tablet/tablet_linux.go` `ProcessEvent` (down/move branches):
+**File:** `../tablet/tablet_linux.go` `ProcessEvent` (down/move branches):
 
 ```go
 d.x = int32(t.X * float64(axisMax))
@@ -42,14 +42,14 @@ d.y = input.DenormUni(float32(t.Y), 0, axisMax)
 
 
 ### B5. Duplicated pointer-event → action mapping
-**Files:** `trackpad/trackpad_linux.go`, `tablet/tablet_linux.go`.
+**Files:** `../trackpad/trackpad_linux.go`, `../tablet/tablet_linux.go`.
 
 Both devices independently translate `ev.Type` → `"down"|"move"|"up"|"button"`
 with the same logic. This is a DRY violation and the two copies have
 already drifted (trackpad treats `button*` as a no-op return-nil;
 tablet handles them).
 
-**Fix:** centralize in `input/event.go`:
+**Fix:** centralize in `../input/event.go`:
 
 ```go
 // Action classifies a browser event type. Empty string means unknown.
@@ -67,7 +67,7 @@ func Action(t string) string {
 Then each device does `switch input.Action(ev.Type)` once.
 
 ### B6. `Norm` + `DenormBi` round-trip is an unnecessary indirection
-**File:** `input/event.go`, used only by `trackpad/trackpad_linux.go`.
+**File:** `../input/event.go`, used only by `../trackpad/trackpad_linux.go`.
 
 The trackpad stores `slot.X = input.Norm(t.X)` (maps `[0,1]→[-1,1]`),
 then emits `input.DenormBi(primary.X, 0, axisMax)` (maps `[-1,1]→[0,axisMax]`).
@@ -76,7 +76,7 @@ The composition is exactly `DenormUni(t.X, 0, axisMax)`. `Norm` and
 uses the `[-1,1]` representation.
 
 **Fix:** store the clamped `[0,1]` value directly and emit with
-`DenormUni`. Then delete `Norm` and `DenormBi` from `input/event.go`.
+`DenormUni`. Then delete `Norm` and `DenormBi` from `../input/event.go`.
 This also makes the trackpad and tablet use the *same* coordinate
 helper (see A2), removing one more subtle inconsistency.
 
@@ -85,7 +85,7 @@ helper (see A2), removing one more subtle inconsistency.
 ## C. Coupling & structure
 
 ### C1. Mutable package-level globals `videoEnabled` and `cli`
-**File:** `main.go`.
+**File:** `../main.go`.
 
 `signalHandler` reads both the global `videoEnabled` (mutated inside
 `main` after the CAP_SYS_ADMIN check) and the global `cli` struct. This
@@ -112,7 +112,7 @@ variable; pass the needed fields into `serverConfig` at startup. This
 also removes the "comment explaining why videoEnabled is a package var".
 
 ### C2. `signalHandler` is too long (≈150 lines, several responsibilities)
-**File:** `main.go`.
+**File:** `../main.go`.
 
 It does: WebSocket upgrade, peer-connection setup, ICE forwarding,
 data-channel event routing, video-pipeline construction, the offer/answer
@@ -135,7 +135,7 @@ fallback policy independently readable/testable.
 
 
 ### D2. Deeply nested capture/encode loop
-**File:** `video/video_linux.go`, `captureLoop`.
+**File:** `../video/video_linux.go`, `captureLoop`.
 
 Four levels of nesting (read → send packet → receive frame → filter →
 receive packet) with `continue`/`break` scattered through. Each stage
@@ -154,7 +154,7 @@ the allocation it balances.
 ## E. Frontend / static assets
 
 ### E1. The two `.area` carousels are duplicated verbatim in `index.html`
-**File:** `static/index.html` (~lines 175-230 and 232-280 are identical).
+**File:** `../static/index.html` (~lines 175-230 and 232-280 are identical).
 
 Every structural or styling change to a panel must be made twice, and
 they already must stay in sync with `PANEL_ORDER` in `app.js`. This is the
@@ -171,7 +171,7 @@ single biggest maintainability hazard in the static assets.
 Either way the markup exists once.
 
 ### E2. `releaseAllPointers` fabricates a fake `PointerEvent`
-**File:** `static/app.js`.
+**File:** `../static/app.js`.
 
 ```js
 sendPointerSample('pointerup', {
@@ -187,7 +187,7 @@ it, or send a dedicated `{type:"pointerup", id}` payload that doesn't
 pretend to be a `PointerEvent`.
 
 ### E3. Magic index `areaEl.id === 'area-bottom' ? 2 : 0`
-**File:** `static/app.js`, `initArea`.
+**File:** `../static/app.js`, `initArea`.
 
 The initial panel index is hard-coded against an element id. If a third
 area is ever added this silently breaks. Pass the initial index via a
@@ -195,7 +195,7 @@ area is ever added this silently breaks. Pass the initial index via a
 `initArea`; this also pairs naturally with E1's template approach.
 
 ### E4. `conn` is a module-level mutable singleton
-**File:** `static/app.js`.
+**File:** `../static/app.js`.
 
 The connection state is a single global `conn` object touched by
 `connect`, `closeOldConnections`, `scheduleReconnect`, the WS/PC
@@ -211,7 +211,7 @@ defer unless you're already touching this code.
 
 ## F. Minor / nits
 
-- **`video.Streamer.Stop` double-close logic** (`video/video_linux.go`): the
+- **`video.Streamer.Stop` double-close logic** (`../video/video_linux.go`): the
   `select { case <-s.stop: return; default: close(s.stop) }` is correct
   but a comment that the second call is a no-op would help; alternatively
   `sync.Once` makes the intent unambiguous:
@@ -221,11 +221,11 @@ defer unless you're already touching this code.
   <-s.done
   s.freeVideoCoding()
   ```
-- **`fmt.Printf("%s\n", string(msg.Data))`** in `main.go` data-channel
+- **`fmt.Printf("%s\n", string(msg.Data))`** in `../main.go` data-channel
   handler: fine, but if event volume ever matters this is the hot path;
   a single `os.Stdout.Write` (plus a newline) avoids the `%s` reflection
   and the string copy. Premature for now — leave it.
-- **`AGENTS.md` typo** ("sored" → "stored" in the Version-numbers
+- **`../AGENTS.md` typo** ("sored" → "stored" in the Version-numbers
   paragraph) and `VERSION` file has no trailing newline handling beyond
   `TrimSpace` (fine).
 - **`sw.js` / manifest.json** are kept only to evict stale service

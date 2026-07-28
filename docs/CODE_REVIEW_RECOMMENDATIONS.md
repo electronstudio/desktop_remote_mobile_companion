@@ -7,7 +7,7 @@ This document contains concrete, maintainability-focused recommendations for the
 ## 1. Introduce an `EventProcessor` interface and route via a map
 
 **Problem**  
-`main.go`'s data-channel callback hard-codes routing between the trackpad and tablet using string literals and concrete types:
+`../main.go`'s data-channel callback hard-codes routing between the trackpad and tablet using string literals and concrete types:
 
 ```go
 switch ev.Device {
@@ -18,7 +18,7 @@ case "trackpad":
 }
 ```
 
-This couples the signaling layer to the two concrete device packages, violates the Open/Closed Principle, and forces future devices to edit `main.go`.
+This couples the signaling layer to the two concrete device packages, violates the Open/Closed Principle, and forces future devices to edit `../main.go`.
 
 **Recommended Change**  
 Define a small interface that both devices already satisfy, then build a route table:
@@ -53,15 +53,15 @@ if err := proc.ProcessEvent(ev); err != nil {
 ```
 
 **Files / Functions**  
-- `input/event.go` (add interface) or new `input/processor.go`
-- `main.go`: `signalHandler` data-channel callback
+- `../input/event.go` (add interface) or new `input/processor.go`
+- `../main.go`: `signalHandler` data-channel callback
 
 ---
 
 ## 2. Replace package-level mutable state with a `Server` struct
 
 **Problem**  
-`main.go` currently relies on package-level variables:
+`../main.go` currently relies on package-level variables:
 
 ```go
 var videoEnabled bool
@@ -92,14 +92,14 @@ func (s *Server) signalHandler(w http.ResponseWriter, r *http.Request) { ... }
 `main` becomes responsible only for wiring: parsing flags, checking capabilities, creating devices, and constructing `Server`. HTTP handlers become methods on `Server`.
 
 **Files / Functions**  
-- `main.go`: `main`, `signalHandler`, package-level `var` declarations
+- `../main.go`: `main`, `signalHandler`, package-level `var` declarations
 
 ---
 
-## 3. Move WebRTC signaling logic out of `main.go`
+## 3. Move WebRTC signaling logic out of `../main.go`
 
 **Problem**  
-`signalHandler` is ~190 lines and mixes WebSocket framing, WebRTC state machine, video streamer lifecycle, data-channel routing, and ICE candidate relaying. `main.go` is therefore doing TLS, HTTP serving, static asset serving, certificate management, device creation, *and* WebRTC signaling.
+`signalHandler` is ~190 lines and mixes WebSocket framing, WebRTC state machine, video streamer lifecycle, data-channel routing, and ICE candidate relaying. `../main.go` is therefore doing TLS, HTTP serving, static asset serving, certificate management, device creation, *and* WebRTC signaling.
 
 **Recommended Change**  
 Extract a `signaling` package or at minimum a `signal.Session` type:
@@ -120,10 +120,10 @@ func (s *Session) handleOffer(msg signalMsg) error
 func (s *Session) handleCandidate(msg signalMsg) error
 ```
 
-This keeps `main.go` as pure wiring and makes the signaling flow testable in isolation.
+This keeps `../main.go` as pure wiring and makes the signaling flow testable in isolation.
 
 **Files / Functions**  
-- `main.go`: `signalHandler`, `signalMsg`
+- `../main.go`: `signalHandler`, `signalMsg`
 - New file/package: `signaling/session.go` (or `internal/signaling/`)
 
 ---
@@ -131,7 +131,7 @@ This keeps `main.go` as pure wiring and makes the signaling flow testable in iso
 ## 4. Fix and simplify the certificate-loading logic
 
 **Problem**  
-`loadOrGenerateCert` in `main.go` uses nested short-variable declarations that shadow `err` across multiple blocks:
+`loadOrGenerateCert` in `../main.go` uses nested short-variable declarations that shadow `err` across multiple blocks:
 
 ```go
 cert, err := tls.LoadX509KeyPair(...)
@@ -154,7 +154,7 @@ func fingerprintFromFile(path string) (string, error)
 Use named return values sparingly or avoid them where `:=` shadows. Return `(tls.Certificate, string, error)` from each helper so the caller is explicit. Consider making the cert generation inject `rand.Reader` for tests.
 
 **Files / Functions**  
-- `main.go`: `loadOrGenerateCert`, `certFingerprint`
+- `../main.go`: `loadOrGenerateCert`, `certFingerprint`
 
 ---
 
@@ -164,7 +164,7 @@ Use named return values sparingly or avoid them where `:=` shadows. Return `(tls
 Event type strings (`"pointerdown"`, `"pointermove"`, `"buttondown"`) and device names (`"trackpad"`, `"tablet"`) are repeated in Go and JavaScript. They are easy to misspell and cannot be checked by the compiler.
 
 **Recommended Change**  
-Add constants in `input/event.go`:
+Add constants in `../input/event.go`:
 
 ```go
 const (
@@ -180,7 +180,7 @@ const (
 )
 ```
 
-Use them in `trackpad.ProcessEvent`, `tablet.ProcessEvent`, and the route map in `main.go`. For the JavaScript side, define a matching block at the top of `static/app.js` and reference it everywhere:
+Use them in `trackpad.ProcessEvent`, `tablet.ProcessEvent`, and the route map in `../main.go`. For the JavaScript side, define a matching block at the top of `../static/app.js` and reference it everywhere:
 
 ```js
 const EVENT = {
@@ -192,11 +192,11 @@ const DEVICE = { TRACKPAD: 'trackpad', TABLET: 'tablet' };
 ```
 
 **Files / Functions**  
-- `input/event.go`
-- `trackpad/trackpad_linux.go`: `ProcessEvent`
-- `tablet/tablet_linux.go`: `ProcessEvent`
-- `main.go`: route table
-- `static/app.js`: send functions
+- `../input/event.go`
+- `../trackpad/trackpad_linux.go`: `ProcessEvent`
+- `../tablet/tablet_linux.go`: `ProcessEvent`
+- `../main.go`: route table
+- `../static/app.js`: send functions
 
 ---
 
@@ -243,7 +243,7 @@ func (d *Device) emitFrame(slots []touchpad.TouchSlot) error
 ```
 
 **Files / Functions**  
-- `trackpad/trackpad_linux.go`: `ProcessEvent`, `acquireSlot`, `releaseSlot`
+- `../trackpad/trackpad_linux.go`: `ProcessEvent`, `acquireSlot`, `releaseSlot`
 
 ---
 
@@ -293,7 +293,7 @@ func (d *Device) proximityOut() {
 Track which buttons are currently pressed (a small set) so `releaseButtons` is accurate.
 
 **Files / Functions**  
-- `tablet/tablet_linux.go`: `ProcessEvent`, `proximityOut`
+- `../tablet/tablet_linux.go`: `ProcessEvent`, `proximityOut`
 
 ---
 
@@ -317,9 +317,9 @@ func Denorm(v float64, min, max int32) int32 {
 Use it in both `trackpad_linux.go` and `tablet_linux.go`. Remove `Norm` and `DenormBi` unless they are genuinely needed by the underlying virtual-device library. If they are, keep them but make the precision trade-off explicit in a comment.
 
 **Files / Functions**  
-- `input/event.go`: `Norm`, `DenormBi`, `DenormUni`
-- `trackpad/trackpad_linux.go`: coordinate conversion
-- `tablet/tablet_linux.go`: coordinate conversion
+- `../input/event.go`: `Norm`, `DenormBi`, `DenormUni`
+- `../trackpad/trackpad_linux.go`: coordinate conversion
+- `../tablet/tablet_linux.go`: coordinate conversion
 
 ---
 
@@ -357,7 +357,7 @@ func offerHasVideo(offer string) bool {
 Even better: do not parse SDP at all. Instead, add the transceiver on the server side only when video is enabled before creating the answer, or inspect `pc.GetTransceivers()` after `SetRemoteDescription`.
 
 **Files / Functions**  
-- `main.go`: `hasVideoMedia`
+- `../main.go`: `hasVideoMedia`
 
 ---
 
@@ -394,7 +394,7 @@ type captureStage struct {
 Each stage owns its own `Close()` method. The top-level `Stop()` becomes a sequence of `s.encoder.Close(); s.filter.Close(); s.capture.Close()`.
 
 **Files / Functions**  
-- `video/video_linux.go`: `Streamer`, `freeVideoCoding`
+- `../video/video_linux.go`: `Streamer`, `freeVideoCoding`
 
 ---
 
@@ -429,7 +429,7 @@ for {
 This makes retry-vs-fatal decisions explicit and testable.
 
 **Files / Functions**  
-- `video/video_linux.go`: `captureLoop`
+- `../video/video_linux.go`: `captureLoop`
 
 ---
 
@@ -444,7 +444,7 @@ if cfg.QP <= 0 { cfg.QP = 24 }
 if cfg.LowPower != 0 && cfg.LowPower != 1 { cfg.LowPower = 1 }
 ```
 
-This is surprising for a caller that passed a config, and the defaults are duplicated with the CLI defaults in `main.go`.
+This is surprising for a caller that passed a config, and the defaults are duplicated with the CLI defaults in `../main.go`.
 
 **Recommended Change**  
 Add a `Config.Validate()` method that returns an error for invalid values and applies defaults only when documented:
@@ -462,12 +462,12 @@ func (c *Config) Validate() error {
 Even better, set defaults in the CLI layer and treat zero values as errors in the library layer, so `video` does not silently change its input.
 
 **Files / Functions**  
-- `video/video_linux.go`: `New`
-- `main.go`: CLI defaults
+- `../video/video_linux.go`: `New`
+- `../main.go`: CLI defaults
 
 ---
 
-## 13. Refactor `static/app.js` into cohesive modules
+## 13. Refactor `../static/app.js` into cohesive modules
 
 **Problem**  
 The entire frontend is one ~650-line IIFE. It handles:
@@ -503,7 +503,7 @@ const Input = { activePointers: new Map(), ... };
 ```
 
 **Files / Functions**  
-- `static/app.js`: entire file
+- `../static/app.js`: entire file
 
 ---
 
@@ -543,7 +543,7 @@ function sendPointerSample(type, e, device, surface) {
 ```
 
 **Files / Functions**  
-- `static/app.js`: `sendPointerSample`, `sendButtonEvent`
+- `../static/app.js`: `sendPointerSample`, `sendButtonEvent`
 
 ---
 
@@ -567,14 +567,14 @@ function setTranslate(percent) {
 Consider using CSS classes (e.g., `.panel-current`, `.panel-prev`, `.panel-next`) to set `order`, so the logic does not touch inline styles in multiple functions.
 
 **Files / Functions**  
-- `static/app.js`: `arrangePanels`, `preparePan`, `setPanTransform`, `endPan`
+- `../static/app.js`: `arrangePanels`, `preparePan`, `setPanTransform`, `endPan`
 
 ---
 
 ## 16. Avoid duplicate HTML for top and bottom areas
 
 **Problem**  
-`static/index.html` contains two nearly identical copies of the area/carousel markup. Keeping them in sync is error-prone.
+`../static/index.html` contains two nearly identical copies of the area/carousel markup. Keeping them in sync is error-prone.
 
 **Recommended Change**  
 Because there is no JS build step, use a tiny runtime duplication is acceptable, but consider generating the second area from JS:
@@ -591,8 +591,8 @@ function cloneArea(id) {
 Alternatively, keep the HTML duplication but add an HTML-only comment warning that changes must be mirrored. The cleanest long-term fix is a small build step or a Go template for `index.html`, but that is a larger change.
 
 **Files / Functions**  
-- `static/index.html`
-- `static/app.js`: `initArea`
+- `../static/index.html`
+- `../static/app.js`: `initArea`
 
 ---
 
@@ -623,9 +623,9 @@ func TestTabletProximityOutReleasesButtons(t *testing.T) { ... }
 ```
 
 **Files / Functions**  
-- `trackpad/trackpad_test.go`
+- `../trackpad/trackpad_test.go`
 - New: `tablet/tablet_test.go`
-- `input/event.go`
+- `../input/event.go`
 
 ---
 
@@ -652,8 +652,8 @@ func (d *Device) ProcessEvent(ev input.Event) error { return nil }
 This keeps the build working without misleading future readers into thinking the implementation notes are part of the active codebase.
 
 **Files / Functions**  
-- `trackpad/trackpad_windows.go`
-- `tablet/tablet_windows.go`
+- `../trackpad/trackpad_windows.go`
+- `../tablet/tablet_windows.go`
 
 ---
 
@@ -672,9 +672,9 @@ var log = log.New(os.Stderr, "[tablet] ", log.LstdFlags)
 Avoid `fmt.Printf` for server output; use `log.Printf` and let the terminal log display raw event data under a `[event]` prefix if desired.
 
 **Files / Functions**  
-- `main.go`: `fmt.Printf` in data-channel callback
-- `video/video_linux.go`: all log lines
-- `tablet/tablet_linux.go`, `trackpad/trackpad_linux.go`
+- `../main.go`: `fmt.Printf` in data-channel callback
+- `../video/video_linux.go`: all log lines
+- `../tablet/tablet_linux.go`, `../trackpad/trackpad_linux.go`
 
 ---
 
@@ -687,7 +687,7 @@ Avoid `fmt.Printf` for server output; use `log.Printf` and let the terminal log 
 Either remove the lint annotation if it is no longer needed, or add a short comment explaining why it is required. If the linter is misidentifying the field, prefer a targeted `//nolint:staticcheck` or similar rather than a generic `unused` suppression.
 
 **Files / Functions**  
-- `video/video_linux.go`: `framesWritten`
+- `../video/video_linux.go`: `framesWritten`
 
 ---
 
@@ -703,4 +703,4 @@ Either remove the lint annotation if it is no longer needed, or add a short comm
 | Medium | 15, 16 | Improves frontend readability |
 | Low | 17, 18, 19, 20 | Testing, portability, logging polish |
 
-Most of these changes can be applied incrementally; the highest-value first step is to introduce the `EventProcessor` interface and a `Server` struct, because almost every other improvement in `main.go` becomes easier once those abstractions exist.
+Most of these changes can be applied incrementally; the highest-value first step is to introduce the `EventProcessor` interface and a `Server` struct, because almost every other improvement in `../main.go` becomes easier once those abstractions exist.

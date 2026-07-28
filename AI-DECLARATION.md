@@ -1,16 +1,15 @@
 ---
 version: "0.1.2"
-level: pair
+level: copilot
+components:
+  video: auto
 ---
 
 This format is based on [AI-DECLARATION.md](https://ai-declaration.md/en/0.1.2).
 
 ## Notes
 
-AI should be used in this project only when it is impossible to tell that it has been used.
+1. AI should be used to generate code only if the code is then reviewed by a human. However currently the `video` module
+has grown so complex that human review is probably not effective.
 
-Given the current state of AI in 2026, this in practise means:
-
-1. AI may be used to generate code only if the code is then reviewed by a human. "Vibe Coding" is not permitted.
-
-2. AI should not be used to generate PRs, issues, etc, unless you are prepared to completely rewrite them to appear human.
+2. AI should not be used to generate PRs, issues, etc, unless you are prepared to rewrite them to appear human.

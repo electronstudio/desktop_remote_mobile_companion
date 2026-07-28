@@ -1,7 +1,6 @@
 # Inara: the Desktop Remote Mobile Companion
 
-[![AI-DECLARATION: pair](https://img.shields.io/badge/䷼%20AI--DECLARATION-pair-ffedd5?labelColor=ffedd5)](https://ai-declaration.md)
-
+[![AI-DECLARATION: copilot](https://img.shields.io/badge/䷼%20AI--DECLARATION-copilot-fee2e2?labelColor=fee2e2)](https://ai-declaration.md)
 Connect your mobile device wirelessly to your PC and use it as:
 
 * Trackpad

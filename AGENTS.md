@@ -233,8 +233,8 @@ Notes:
 - **Build needs** the FFmpeg/libdrm C dev packages (`libavcodec-dev libavfilter-dev libavformat-dev libavutil-dev libavdevice-dev libdrm-dev`), x11grab support in FFmpeg, and CGO.
 - **Graceful degradation.** If `video.New` fails (no encoder/source/driver), the server logs a warning, adds no video track, and trackpad/tablet keep working; the tablet panel shows its placeholder.
 - **Visibility gating.** The browser only attaches the track to a `<video>` while the tablet panel is the active panel in its area, so a hidden surface does no decode work.
-- **One client at a time.** The pipeline is created per peer connection; `kmsgrab` is exclusive, so only one phone receives video concurrently. A shared fan-out pipeline is future work (see `improvements.md`).
-- The fixed 30 fps default, a Windows ddagrab backend, adaptive native framerate, and multi-client fan-out are tracked in `improvements.md`.
+- **One client at a time.** The pipeline is created per peer connection; `kmsgrab` is exclusive, so only one phone receives video concurrently. A shared fan-out pipeline is future work (see `docs/improvements.md`).
+- The fixed 30 fps default, a Windows ddagrab backend, adaptive native framerate, and multi-client fan-out are tracked in `docs/improvements.md`.
 
 ## Dependencies
 
