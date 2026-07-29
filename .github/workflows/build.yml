@@ -84,10 +84,10 @@ jobs:
           CGO_LDFLAGS: "-L${{ env.FFMPEG_PREFIX }}/lib"
           PKG_CONFIG_PATH: "${{ env.FFMPEG_PREFIX }}/lib/pkgconfig"
           PKG_CONFIG: "pkg-config --static"
-        run: go build -o companion ./cmd/companion -ldflags "-linkmode external"
+        run: go build -o companion -ldflags "-linkmode external" ./cmd/companion
 
       - name: Build GUI (companion_gui)
-        run: go build -tags migrated_fynedo -o companion_gui ./cmd/companion_gui -ldflags "-linkmode external"
+        run: go build -tags migrated_fynedo -o companion_gui -ldflags "-linkmode external" ./cmd/companion_gui
 
       - name: Stage artifact
         run: |

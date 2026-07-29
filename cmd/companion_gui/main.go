@@ -113,6 +113,7 @@ func main() {
 	// widgets below edit this struct before the Start button passes it to
 	// server.Run.
 	cli := server.CLIDefaults()
+	cli.DontRunSudo = true
 
 	// NewWithID gives the app a stable unique ID (required by the Preferences
 	// API and for a stable per-user config/cache directory). The app must be
@@ -186,8 +187,8 @@ func main() {
 		os.Exit(0)
 	}
 
-	top := container.NewVBox(form, start)
-	w.SetContent(container.NewBorder(top, fix_permissions, nil, nil, logs.scroll))
+	top := container.NewVBox(form, fix_permissions, start)
+	w.SetContent(container.NewBorder(top, nil, nil, nil, logs.scroll))
 	w.Resize(fyne.NewSize(640, 480))
 
 	// Closing the window exits the process, killing the server goroutine.
