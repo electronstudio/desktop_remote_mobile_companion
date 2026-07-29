@@ -3,11 +3,17 @@ package main
 import (
 	"bufio"
 	"errors"
+	"fmt"
 	"os"
+	"os/exec"
+	"os/user"
 	"strconv"
 	"strings"
+	"syscall"
 
+	"github.com/fatih/color"
 	"golang.org/x/sys/unix"
+	"kernel.org/pub/linux/libs/security/libcap/cap"
 )
 
 // capSysAdminBit is the bit position of CAP_SYS_ADMIN in the Linux capability
@@ -22,6 +28,15 @@ const capSysAdminBit = 21
 // The check is dependency-free: it reads the CapEff line from
 // /proc/self/status, which is the effective capabilities as a 64-bit hex mask.
 func hasCapSysAdmin() (bool, error) {
+	orig := cap.GetProc()
+	defer orig.SetProc()
+	c, err := orig.Dup()
+	if err == nil {
+		if err := c.SetFlag(cap.Effective, true, cap.SYS_ADMIN); err == nil {
+			c.SetProc()
+		}
+	}
+
 	f, err := os.Open("/proc/self/status")
 	if err != nil {
 		return false, err
@@ -67,4 +82,110 @@ func onNoSuidMount() (bool, error) {
 		return false, err
 	}
 	return st.Flags&unix.ST_NOSUID != 0, nil
+}
+
+// dropSudoPrivileges drops privileges back to the user who invoked sudo.
+// If the program wasn't run via sudo, it does nothing.
+func dropSudoPrivileges() error {
+	// We only want to drop privileges if we are actually root
+	if os.Getuid() != 0 {
+		return nil
+	}
+
+	sudoUID := os.Getenv("SUDO_UID")
+	sudoGID := os.Getenv("SUDO_GID")
+
+	// If SUDO_UID is empty, the program was started by root directly, not via sudo.
+	if sudoUID == "" {
+		return fmt.Errorf("could not determine original user: SUDO_UID is not set")
+	}
+
+	uid, err := strconv.Atoi(sudoUID)
+	if err != nil {
+		return fmt.Errorf("invalid SUDO_UID: %w", err)
+	}
+
+	// Parse SUDO_GID. If it's missing for some reason, we can look it up
+	// using the SUDO_USER environment variable and the os/user package.
+	gid, err := strconv.Atoi(sudoGID)
+	if err != nil {
+		sudoUser := os.Getenv("SUDO_USER")
+		if sudoUser == "" {
+			return fmt.Errorf("could not determine group: SUDO_GID is invalid and SUDO_USER is missing")
+		}
+
+		u, err := user.Lookup(sudoUser)
+		if err != nil {
+			return fmt.Errorf("failed to lookup user %s: %w", sudoUser, err)
+		}
+
+		gid, err = strconv.Atoi(u.Gid)
+		if err != nil {
+			return fmt.Errorf("invalid GID for user %s: %w", sudoUser, err)
+		}
+	}
+
+	// 1. Clear supplementary groups (crucial for security)
+	if err := syscall.Setgroups([]int{}); err != nil {
+		return fmt.Errorf("setgroups: %w", err)
+	}
+
+	// 2. Drop group privileges
+	if err := syscall.Setgid(gid); err != nil {
+		return fmt.Errorf("setgid: %w", err)
+	}
+
+	// 3. Drop user privileges
+	if err := syscall.Setuid(uid); err != nil {
+		return fmt.Errorf("setuid: %w", err)
+	}
+
+	return nil
+}
+
+func reExecWithSudo() {
+	color.Set(color.FgCyan)
+	fmt.Printf("\n\nAttempting to re-run with sudo privileges...\n\n")
+	color.Unset()
+	// Get the absolute path of the currently running executable
+	executable, err := os.Executable()
+	if err != nil {
+		fmt.Printf("Error determining executable path: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Prepare the arguments for the new process.
+	// We prepend the executable path to the existing arguments (skipping the original program name).
+	args := append([]string{executable}, os.Args[1:]...)
+
+	// Create the exec.Cmd to run the command via sudo
+	cmd := exec.Command("sudo", args...)
+
+	// Connect the standard input, output, and error streams so the user can
+	// interact with the program (and enter their sudo password if prompted).
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	// Run the command. This blocks until the child process exits.
+	err = cmd.Run()
+	if err != nil {
+		// Check if the error is due to the user canceling the sudo prompt
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			if status, ok := exitErr.Sys().(syscall.WaitStatus); ok {
+				if status.Signaled() && status.Signal() == syscall.SIGINT {
+					fmt.Println("\nProcess interrupted by user.")
+					os.Exit(1)
+				}
+			}
+		}
+		fmt.Printf("Failed to execute with sudo: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Exit with the same exit code as the child process
+	if cmd.ProcessState != nil {
+		os.Exit(cmd.ProcessState.ExitCode())
+	}
+	os.Exit(0)
 }

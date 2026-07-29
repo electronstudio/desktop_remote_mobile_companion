@@ -7,3 +7,9 @@ func hasCapSysAdmin() (bool, error) {
 func onNoSuidMount() (bool, error) {
 	return false, nil
 }
+
+func dropSudoPrivileges() error {
+	return nil
+}
+
+func reExecWithSudo() {}

@@ -40,13 +40,7 @@ Inara is written in Go rather than Rust.
 
 From [releases](releases).
 
-Needs uinput group permissions.  Enter this command then reboot:
 
-    sudo usermod -aG uinput $USER
-
-To enable desktop video capture, grant CAP_SYS_ADMIN to the binary once (no need to run as root afterwards):
-
-    sudo setcap cap_sys_admin+ep companion
 
 On Intel GPU systems the full drivers are required, install on Debian with:
 
@@ -64,6 +58,27 @@ If you can't see your mouse pointer, you need to disable hardware cursor:
 By default when the tablet tool is active it keeps the tablet 'hovering'
 which prevents use of a mouse until you switch away from the tool.
 This is required by some software such as Gnome.  But you can disable it...
+
+## Security
+
+To work, Inara requires access to `uinput`.  You have three options
+for getting this:
+1. Run with `sudo companion`. 
+2. Add your user to the uniput group, then reboot. (This has the downside of granting access to every other program on your system.):
+
+    `sudo usermod -aG uinput $USER`
+
+3. Grant a more limited set of permissions to just this program permanently:
+
+    `sudo /sbin/setcap cap_sys_admin,cap_dac_override,cap_setpcap=p /path/to/companion`
+
+To capture video, Inara requires `sys_admin` permission.  Options for this:
+1. Disable video with `companion --video-source none`
+2. Run with `sudo companion`.
+3. Grant a more limited set of permissions to the program permanently:
+
+   `sudo /sbin/setcap cap_sys_admin,cap_dac_override,cap_setpcap=p /path/to/companion`
+
 
 ## Run
 

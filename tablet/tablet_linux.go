@@ -30,6 +30,7 @@ import (
 	"github.com/electronstudio/desktop_remote_mobile_companion/input"
 	virtual_device "github.com/jbdemonte/virtual-device"
 	"github.com/jbdemonte/virtual-device/linux"
+	"kernel.org/pub/linux/libs/security/libcap/cap"
 )
 
 const (
@@ -97,6 +98,18 @@ type device struct {
 // compositors without that cooldown (e.g. wlroots) to avoid the perpetual
 // hover and let the mouse work.
 func newDevice(keepAlive bool) (Device, error) {
+	// attempt to raise caps for situation where we dont have sudo
+	// and we dont have input group access to
+	// uinput but we do have libcap ability to get sys admin caps
+	orig := cap.GetProc()
+	defer orig.SetProc() // restore original caps on exit.
+	c, err := orig.Dup()
+	if err == nil {
+		if err := c.SetFlag(cap.Effective, true, cap.DAC_OVERRIDE); err == nil {
+			c.SetProc()
+		}
+	}
+
 	vd := virtual_device.NewVirtualDevice().
 		WithBusType(linux.BUS_VIRTUAL).
 		WithVendor(0x1234).

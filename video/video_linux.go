@@ -39,6 +39,7 @@ import (
 	"github.com/asticode/go-astiav"
 	"github.com/pion/webrtc/v4"
 	"github.com/pion/webrtc/v4/pkg/media"
+	"kernel.org/pub/linux/libs/security/libcap/cap"
 )
 
 // kmsgrabStreamer owns the kmsgrab input, the decode pipeline, and the shared
@@ -197,6 +198,18 @@ func autoDetectCard() (string, error) {
 
 // initKmsgrab opens the kmsgrab input device and prepares the decoder.
 func (s *kmsgrabStreamer) initKmsgrab() error {
+	// attempt to raise caps for situation where we dont have sudo
+	// and we dont have input group access to
+	// uinput but we do have libcap ability to get sys admin caps
+	orig := cap.GetProc()
+	//defer orig.SetProc() // dont think we can restore original caps on exit without breaking video?
+	c, err := orig.Dup()
+	if err == nil {
+		if err := c.SetFlag(cap.Effective, true, cap.SYS_ADMIN); err == nil {
+			c.SetProc()
+		}
+	}
+
 	s.inputFormatContext = astiav.AllocFormatContext()
 	if s.inputFormatContext == nil {
 		return errors.New("video: alloc input format context")

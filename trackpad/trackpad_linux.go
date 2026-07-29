@@ -16,6 +16,7 @@ import (
 	virtual_device "github.com/jbdemonte/virtual-device"
 	"github.com/jbdemonte/virtual-device/linux"
 	"github.com/jbdemonte/virtual-device/touchpad"
+	"kernel.org/pub/linux/libs/security/libcap/cap"
 )
 
 const (
@@ -38,6 +39,18 @@ type device struct {
 // uinput backend) and returns it as a Device. It is the platform-specific
 // constructor called by the cross-platform New in trackpad.go.
 func newDevice() (Device, error) {
+	// attempt to raise caps for situation where we dont have sudo
+	// and we dont have input group access to
+	// uinput but we do have libcap ability to get sys admin caps
+	orig := cap.GetProc()
+	defer orig.SetProc() // restore original caps on exit.
+	c, err := orig.Dup()
+	if err == nil {
+		if err := c.SetFlag(cap.Effective, true, cap.DAC_OVERRIDE); err == nil {
+			c.SetProc()
+		}
+	}
+
 	vd := virtual_device.NewVirtualDevice().
 		WithBusType(linux.BUS_USB).
 		WithVendor(0x1234).
