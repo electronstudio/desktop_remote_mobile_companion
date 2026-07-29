@@ -1,19 +1,5 @@
 # Improvements (future work)
 
-## Video capture / encoder selection
-
-- Implemented: the `--video-source` flag selects the capture backend
-  (`kmsgrab` or `x11grab` on Linux), and `--video-encoder` selects the H264
-  encoder (`h264_vaapi`, `h264_nvenc`, `libx264`, or `auto`). The encoder axis
-  is shared across sources in `../video/encoder.go`; `x11grab` pairs with any
-  encoder (libx264 software, or vaapi/nvenc via `hwupload`). Auto-encoder
-  falls back to `libx264` when no hardware encoder is available.
-- Still future: **automatic** kmsgrab→x11grab fallback when the chosen source
-  fails at runtime (today the user picks the source manually; a failed
-  attempt degrades to no-video rather than retrying the other source).
-- Still future: a **Windows ddagrab** capture backend (`video_windows.go` is a
-  not-yet-implemented stub; on Windows video is disabled until it lands).
-
 ## Adaptive framerate
 
 - Currently fixed at 30 fps. The capture loop should use the native frame rate

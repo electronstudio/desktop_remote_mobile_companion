@@ -8,7 +8,6 @@ url="https://github.com/electronstudio/desktop_remote_mobile_companion"
 license=('GPL-3.0-only')
 depends=('ffmpeg' 'gcc-libs')
 makedepends=('go>=1.24')
-install="arch.install"
 source=(
   "git+https://github.com/electronstudio/desktop_remote_mobile_companion.git"
 )
@@ -30,5 +29,5 @@ package() {
   cd "$srcdir/desktop_remote_mobile_companion"
   mkdir -p "$pkgdir/usr/bin"
   cp companion "$pkgdir/usr/bin/companion"
-  setcap cap_sys_admin+ep "$pkgdir/usr/bin/companion"
+  setcap cap_sys_admin,cap_dac_override,cap_setpcap=p "$pkgdir/usr/bin/companion"
 }
