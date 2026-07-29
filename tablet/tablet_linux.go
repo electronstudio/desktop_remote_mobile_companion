@@ -110,10 +110,21 @@ func newDevice(keepAlive bool) (Device, error) {
 		}
 	}
 
+	// Spoof a real pen tablet so libwacom (and therefore the GNOME Settings
+	// "Graphics Tablets" panel) recognises the device. GNOME lists only
+	// tablets libwacom can describe; libwacom's get_device_info() rejects any
+	// bus it cannot map to USB/Bluetooth/I2C, and a BUS_VIRTUAL (0x06) device
+	// with no UINPUT_SUBSYSTEM udev property yields "Unsupported bus
+	// 'unknown'", so even GNOME 47+'s generic fallback never shows it. We
+	// pretend to be a "One by Wacom (medium)" (CTL-671, usb 056a:0301): a
+	// pen-only tablet with no pad buttons, no touch and pressure+tilt —
+	// exactly the capabilities we emulate — so the panel shows it with the
+	// correct options. The friendly Name is cosmetic only; libwacom matches
+	// on bus/vid/pid, not the name.
 	vd := virtual_device.NewVirtualDevice().
-		WithBusType(linux.BUS_VIRTUAL).
-		WithVendor(0x1234).
-		WithProduct(0x5679).
+		WithBusType(linux.BUS_USB).
+		WithVendor(0x056a).  // Wacom Co., Ltd
+		WithProduct(0x0301). // One by Wacom (medium), CTL-671
 		WithVersion(0x0001).
 		WithName("Desktop Remote Mobile Companion Tablet").
 		WithAbsAxes([]virtual_device.AbsAxis{
