@@ -4,7 +4,7 @@ This file contains the context coding agents need to work on this project.
 
 # Version numbers
 
-Always increment the minor version number sored in VERISON file before doing a build, e.g. VERSION 0.3.7 becomes 0.3.8.
+Always increment the minor version number sored in VERISON file before doing a build, e.g. server/VERSION 0.3.7 becomes 0.3.8.
 
 ## Project overview
 
@@ -34,7 +34,12 @@ github.com/electronstudio/desktop_remote_mobile_companion
                              +-----------------+
 ```
 
-- `main.go` — HTTPS server, self-signed certificate generation, static/index serving, virtual-device creation, and version injection. The `/signal` WebSocket handler upgrades the connection and delegates to a `signaling.Session`, so `main.go` no longer contains WebRTC or device-routing logic.
+- `cmd/companion/main.go` — the `companion` CLI binary entry point: parses command-line flags (via `go-arg`) and calls `server.Run`.
+- `cmd/companion_gui/main.go` — the `companion_gui` binary entry point: a Fyne GUI with a single "Start" button that runs `server.Run` in a goroutine with default flags (no CLI parsing).
+- `server/server.go` — the shared server library: HTTPS server, self-signed certificate generation, static/index serving, virtual-device creation, and version injection, exposed as `server.Run(cli CLI)`. The `/signal` WebSocket handler upgrades the connection and delegates to a `signaling.Session`, so `server.go` no longer contains WebRTC or device-routing logic.
+- `server/platform_linux.go` — platform/capability helpers (`hasCapSysAdmin`, `onNoSuidMount`, `reExecWithSudo`, privilege dropping), moved into the `server` package.
+- `server/platform_windows.go` — Windows stubs of the platform helpers.
+- `server/device_help.go` — the uinput/CAP_SYS_ADMIN instruction strings shown to the user on permission errors.
 - `signaling/session.go` — WebRTC signaling protocol for one client connection: the WebSocket signaling loop, peer-connection lifecycle, data-channel event routing to virtual input devices via an `input.EventProcessor` route map, and the desktop-video pipeline (built on demand from the offer, fail-open, in `maybeAddVideoTrack`).
 - `input/event.go` — shared `Touch`/`Event` types and coordinate helpers used by both devices.
 - `input/processor.go` — `EventProcessor` and `Activator` interfaces the signaling layer routes data-channel events through.
@@ -44,29 +49,33 @@ github.com/electronstudio/desktop_remote_mobile_companion
 - `video/video_x11grab_linux.go` — Linux x11grab capture backend (X server).
 - `video/encoder.go` — shared H264 encoder + filter-graph helper (the orthogonal "encoder axis": h264_vaapi / h264_nvenc / libx264), used by all capture backends.
 - `video/video_windows.go` — Windows ddagrab capture backend (placeholder pending implementation).
-- `static/index.html` — responsive touch UI with mode selector, embedded desktop `<video>` in the tablet panel, and version display.
-- `static/app.js` — browser WebRTC client, touch-event capture, mode switching, recv-only video transceiver + `ontrack` rendering with visibility gating.
-- `VERSION` — embedded version string, displayed by both server and client.
+- `server/static/index.html` — responsive touch UI with mode selector, embedded desktop `<video>` in the tablet panel, and version display.
+- `server/static/app.js` — browser WebRTC client, touch-event capture, mode switching, recv-only video transceiver + `ontrack` rendering with visibility gating.
+- `server/VERSION` — embedded version string, displayed by both server and client.
 
 ## Build and run
 
 ```bash
 # default port 8080
-go run .
+go run ./cmd/companion
 
 # custom port
-go run . --port 8443
+go run ./cmd/companion --port 8443
 # or
-go run . -p 8443
+go run ./cmd/companion -p 8443
+
+# GUI (opens a Fyne window with a Start button; ignores CLI args)
+go run -tags migrated_fynedo ./cmd/companion_gui
 ```
 
-Build the binary:
+Build the binaries:
 
 ```bash
-go build -o companion .
+go build -o companion ./cmd/companion
+go build -tags migrated_fynedo -o companion_gui ./cmd/companion_gui
 ```
 
-The static HTML/JS assets are embedded into the binary using `//go:embed`, so the single compiled binary is self-contained.
+The static HTML/JS assets are embedded into the binary using `//go:embed` (from the `server` package), so each compiled binary is self-contained. The GUI binary links Fyne (via GLFW), which needs the X11/Wayland/OpenGL client libraries at runtime (`libglvnd`, `mesa`, `libx11`, `libxcursor`, `libxrandr`, `libxinerama`, `libxi`, `wayland` on Arch; `libgl1`, `libegl1`, `libwayland-*`, `libx11`, `libxcursor1`, `libxrandr2`, `libxinerama1`, `libxi6` on Debian).
 
 ## Configuration
 
@@ -261,7 +270,7 @@ No JavaScript build step is used; `static/app.js` is served as-is.
 
 Manual test flow:
 
-1. `go run .`
+1. `go run ./cmd/companion`
 2. Open the printed LAN URL in a phone browser.
 3. Accept the self-signed certificate.
 4. Verify the status area shows “Data channel open” and the version number.

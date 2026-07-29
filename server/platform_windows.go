@@ -1,4 +1,4 @@
-package main
+package server
 
 func hasCapSysAdmin() (bool, error) {
 	return true, nil

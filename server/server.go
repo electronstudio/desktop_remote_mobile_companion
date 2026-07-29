@@ -1,4 +1,4 @@
-package main
+package server
 
 import (
 	"crypto/ecdsa"
@@ -22,7 +22,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/alexflint/go-arg"
 	"github.com/electronstudio/desktop_remote_mobile_companion/input"
 	"github.com/electronstudio/desktop_remote_mobile_companion/signaling"
 	"github.com/electronstudio/desktop_remote_mobile_companion/tablet"
@@ -44,7 +43,7 @@ var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool { return true },
 }
 
-var cli struct {
+type CLI struct {
 	Port int `arg:"-p,--port" default:"8080" help:"HTTPS listen port"`
 
 	VideoSource   string `arg:"--video-source" default:"kmsgrab" help:"desktop video capture source: \"kmsgrab\" (DRM, default), \"x11grab\" (X server), or \"none\" to disable video"`
@@ -67,8 +66,7 @@ var (
 	_ input.Activator      = (tablet.Device)(nil)
 )
 
-func main() {
-	arg.MustParse(&cli)
+func Run(cli CLI) {
 	listenAddr := fmt.Sprintf(":%d", cli.Port)
 	versionStr := strings.TrimSpace(version)
 

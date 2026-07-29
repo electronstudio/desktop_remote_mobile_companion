@@ -19,7 +19,7 @@ jobs:
       - uses: actions/checkout@v7
       - id: get-version
         run: |
-          version=$(cat VERSION)
+          version=$(cat server/VERSION)
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
   build-linux:
@@ -84,13 +84,17 @@ jobs:
           CGO_LDFLAGS: "-L${{ env.FFMPEG_PREFIX }}/lib"
           PKG_CONFIG_PATH: "${{ env.FFMPEG_PREFIX }}/lib/pkgconfig"
           PKG_CONFIG: "pkg-config --static"
-        run: go build -o companion -ldflags "-linkmode external"
+        run: go build -o companion ./cmd/companion -ldflags "-linkmode external"
+
+      - name: Build GUI (companion_gui)
+        run: go build -tags migrated_fynedo -o companion_gui ./cmd/companion_gui -ldflags "-linkmode external"
 
       - name: Stage artifact
         run: |
           name="desktop_remote_mobile_companion-linux-x86_64-${{ needs.get-version.outputs.version }}"
           mkdir -p "dist/$name"
           cp companion "dist/$name/"
+          cp companion_gui "dist/$name/"
           cp README.md LICENSE "dist/$name/"
 
       - name: Upload
@@ -232,7 +236,7 @@ jobs:
         shell: msys2 {0}
         run: |
           export PKG_CONFIG_PATH="$FFMPEG_PREFIX/lib/pkgconfig"
-          go build -ldflags "-linkmode external" -o companion.exe
+          go build -ldflags "-linkmode external" -o companion.exe ./cmd/companion
 
       - name: Stage artifact
         shell: msys2 {0}

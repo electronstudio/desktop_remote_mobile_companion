@@ -1,4 +1,4 @@
-package main
+package server
 
 const uinputInstructions = `uinput access denied. To fix permissions, run:
 

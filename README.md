@@ -118,7 +118,16 @@ makepkg -si
 ```bash
 sudo apt install libavcodec-dev libavfilter-dev libavformat-dev \
         libavutil-dev libavdevice-dev libdrm-dev
-go build -o companion
+go build -o companion ./cmd/companion
+```
+
+To build the GUI (`companion_gui`) you additionally need the Fyne/GLFW
+runtime libraries. On Debian:
+
+```bash
+sudo apt install libgl1 libegl1 libwayland-client0 libwayland-cursor0 \
+        libwayland-egl1 libx11-6 libxcursor1 libxrandr2 libxinerama1 libxi6
+go build -tags migrated_fynedo -o companion_gui ./cmd/companion_gui
 ```
 
 
