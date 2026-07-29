@@ -34,8 +34,10 @@ github.com/electronstudio/desktop_remote_mobile_companion
                              +-----------------+
 ```
 
-- `main.go` — HTTPS server, self-signed certificate generation, WebSocket signaling handler, WebRTC peer connection, data-channel receiver, device routing, version injection, desktop video track wiring.
+- `main.go` — HTTPS server, self-signed certificate generation, static/index serving, virtual-device creation, and version injection. The `/signal` WebSocket handler upgrades the connection and delegates to a `signaling.Session`, so `main.go` no longer contains WebRTC or device-routing logic.
+- `signaling/session.go` — WebRTC signaling protocol for one client connection: the WebSocket signaling loop, peer-connection lifecycle, data-channel event routing to virtual input devices via an `input.EventProcessor` route map, and the desktop-video pipeline (built on demand from the offer, fail-open, in `maybeAddVideoTrack`).
 - `input/event.go` — shared `Touch`/`Event` types and coordinate helpers used by both devices.
+- `input/processor.go` — `EventProcessor` and `Activator` interfaces the signaling layer routes data-channel events through.
 - `trackpad/trackpad_linux.go` — virtual Linux multitouch trackpad (Stage 2).
 - `tablet/tablet_linux.go` — virtual Linux absolute graphics tablet.
 - `video/video_linux.go` — Linux kmsgrab capture backend (DRM framebuffer) feeding a Pion H264 WebRTC track.
@@ -214,7 +216,7 @@ The server prints the raw JSON line to stdout using `fmt.Printf`.
 
 ## Desktop video streaming
 
-The phone's **tablet** panel shows a live H264 stream of the PC desktop, sent server→browser over the same WebRTC peer connection as the touch data channel (opposite direction). The browser adds a `recvonly` video transceiver; when the server's `signalHandler` sees a video m-line in the offer it builds a capture pipeline, `AddTrack`s an H264 `TrackLocalStaticSample`, and answers. H264 samples flow over RTP to the phone's `<video>` element.
+The phone's **tablet** panel shows a live H264 stream of the PC desktop, sent server→browser over the same WebRTC peer connection as the touch data channel (opposite direction). The browser adds a `recvonly` video transceiver; when the server's `signaling.Session` (`maybeAddVideoTrack`) sees a video m-line in the offer it builds a capture pipeline, `AddTrack`s an H264 `TrackLocalStaticSample`, and answers. H264 samples flow over RTP to the phone's `<video>` element.
 
 The capture pipeline has two independent axes: the **source** (`--video-source`) and the **encoder** (`--video-encoder`, auto by default). On Linux the kmsgrab source (the default) mirrors:
 

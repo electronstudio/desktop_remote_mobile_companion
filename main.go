@@ -10,7 +10,6 @@ import (
 	"crypto/x509/pkix"
 	"embed"
 	"encoding/hex"
-	"encoding/json"
 	"encoding/pem"
 	"fmt"
 	"io/fs"
@@ -21,18 +20,17 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/alexflint/go-arg"
 	"github.com/electronstudio/desktop_remote_mobile_companion/input"
+	"github.com/electronstudio/desktop_remote_mobile_companion/signaling"
 	"github.com/electronstudio/desktop_remote_mobile_companion/tablet"
 	"github.com/electronstudio/desktop_remote_mobile_companion/trackpad"
 	"github.com/electronstudio/desktop_remote_mobile_companion/video"
 	"github.com/electronstudio/low_latency_dictation/toast"
 	"github.com/gorilla/websocket"
 	"github.com/mdp/qrterminal/v3"
-	"github.com/pion/webrtc/v4"
 )
 
 //go:embed static/*
@@ -40,11 +38,6 @@ var staticFS embed.FS
 
 //go:embed VERSION
 var version string
-
-// videoEnabled is the startup decision about whether to attempt desktop
-// video streaming for this run. It is computed in main from --video-source
-// and the CAP_SYS_ADMIN check, and read by signalHandler.
-var videoEnabled bool
 
 var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool { return true },
@@ -64,14 +57,15 @@ var cli struct {
 	NoTabletKeepalive bool `arg:"--no-tablet-keepalive" default:"false" help:"disable the tablet hover keep-alive (Mutter cooldown workaround); use on compositors without the cooldown (e.g. wlroots) so the mouse is not grabbed while idle"`
 }
 
-type signalMsg struct {
-	Type             string  `json:"type"` // offer | answer | candidate
-	SDP              string  `json:"sdp,omitempty"`
-	Candidate        string  `json:"candidate,omitempty"`
-	SDPMLineIndex    *uint16 `json:"sdpMLineIndex,omitempty"`
-	SDPMid           *string `json:"sdpMid,omitempty"`
-	UsernameFragment *string `json:"usernameFragment,omitempty"`
-}
+// Compile-time checks that the concrete device interfaces satisfy the
+// routing contracts the signaling layer relies on: both devices are event
+// processors, and only the tablet additionally handles the "activate"
+// control (input.Activator).
+var (
+	_ input.EventProcessor = (trackpad.Device)(nil)
+	_ input.EventProcessor = (tablet.Device)(nil)
+	_ input.Activator      = (tablet.Device)(nil)
+)
 
 func main() {
 	arg.MustParse(&cli)
@@ -79,16 +73,16 @@ func main() {
 	versionStr := strings.TrimSpace(version)
 
 	if err := toast.Init(nil); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: %v\n", err)
+		log.Printf("warning: %v\n", err)
 	}
 
 	// videoEnabled is the effective decision about whether desktop video
 	// streaming will be attempted. It starts true unless the user selected
 	// --video-source=none, and may be cleared at startup if the process lacks
 	// CAP_SYS_ADMIN, which kmsgrab needs to acquire DRM master and map the
-	// framebuffer. Keeping it as a package var lets signalHandler avoid
-	// re-running the check.
-	videoEnabled = cli.VideoSource != "none"
+	// framebuffer. It is a local passed to each signaling session via Config,
+	// so the CAP_SYS_ADMIN check below only has to clear it once.
+	videoEnabled := cli.VideoSource != "none"
 
 	log.Printf("Desktop Remote Mobile Companion v%s", versionStr)
 
@@ -130,6 +124,26 @@ func main() {
 	indexHTML := strings.ReplaceAll(string(indexBytes), "{{VERSION}}", versionStr)
 	fileServer := http.FileServer(http.FS(staticSub))
 
+	// videoCfg is built once and reused for every connection's capture
+	// pipeline; it never changes between offers.
+	videoCfg := video.Config{
+		Source:    cli.VideoSource,
+		Encoder:   cli.VideoEncoder,
+		CardPath:  cli.VideoCard,
+		MaxWidth:  cli.VideoWidth,
+		FrameRate: cli.VideoFps,
+		QP:        cli.VideoQP,
+		LowPower:  cli.LowPower,
+	}
+
+	// processors routes data-channel events to the virtual input device that
+	// handles each Event.Device name, keeping the signaling layer
+	// device-agnostic (see input.EventProcessor / input.Activator).
+	processors := map[string]input.EventProcessor{
+		"trackpad": pad,
+		"tablet":   tabletDev,
+	}
+
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/" || r.URL.Path == "/index.html" {
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -140,7 +154,20 @@ func main() {
 		fileServer.ServeHTTP(w, r)
 	})
 	http.HandleFunc("/signal", func(w http.ResponseWriter, r *http.Request) {
-		signalHandler(w, r, pad, tabletDev)
+		ws, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			log.Printf("websocket upgrade failed: %v", err)
+			return
+		}
+		if err := signaling.New(signaling.Config{
+			WS:           ws,
+			Remote:       r.RemoteAddr,
+			Processors:   processors,
+			VideoEnabled: videoEnabled,
+			VideoConfig:  videoCfg,
+		}).Run(); err != nil {
+			log.Printf("%v", err)
+		}
 	})
 
 	if cli.VideoSource == "kmsgrab" {
@@ -224,185 +251,6 @@ func main() {
 		},
 	}
 	log.Fatal(server.ListenAndServeTLS("", ""))
-}
-
-func signalHandler(w http.ResponseWriter, r *http.Request, pad trackpad.Device, tabletDev tablet.Device) {
-	ws, err := upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		log.Printf("websocket upgrade failed: %v", err)
-		return
-	}
-	defer ws.Close()
-
-	log.Printf("signal connection from %s", r.RemoteAddr)
-
-	config := webrtc.Configuration{
-		ICEServers: []webrtc.ICEServer{
-			{URLs: []string{"stun:stun.l.google.com:19302"}},
-		},
-	}
-	pc, err := webrtc.NewPeerConnection(config)
-	if err != nil {
-		log.Printf("peer connection creation failed: %v", err)
-		return
-	}
-	defer pc.Close()
-
-	var writeMu sync.Mutex
-	write := func(msg signalMsg) {
-		b, _ := json.Marshal(msg)
-		writeMu.Lock()
-		ws.WriteMessage(websocket.TextMessage, b)
-		writeMu.Unlock()
-	}
-
-	// videoStreamer holds the desktop capture pipeline for this connection.
-	// It is created only when the peer's offer contains a video media section
-	// and video is not disabled. It is nil otherwise.
-	var videoStreamer video.Streamer
-
-	pc.OnDataChannel(func(dc *webrtc.DataChannel) {
-		log.Printf("data channel received from %s", r.RemoteAddr)
-		dc.OnMessage(func(msg webrtc.DataChannelMessage) {
-			var ev input.Event
-			if err := json.Unmarshal(msg.Data, &ev); err != nil {
-				log.Printf("bad touch event from %s: %v", r.RemoteAddr, err)
-				return
-			}
-			switch ev.Device {
-			case "tablet":
-				if ev.Type == "activate" {
-					active := ev.Active != nil && *ev.Active
-					tabletDev.SetActive(active)
-				} else if err := tabletDev.ProcessEvent(ev); err != nil {
-					log.Printf("tablet event error from %s: %v", r.RemoteAddr, err)
-				}
-			case "trackpad":
-				if err := pad.ProcessEvent(ev); err != nil {
-					log.Printf("trackpad event error from %s: %v", r.RemoteAddr, err)
-				}
-			default:
-				log.Printf("unknown device %q from %s", ev.Device, r.RemoteAddr)
-			}
-		})
-	})
-
-	pc.OnICECandidate(func(c *webrtc.ICECandidate) {
-		if c == nil {
-			return
-		}
-		init := c.ToJSON()
-		write(signalMsg{
-			Type:             "candidate",
-			Candidate:        init.Candidate,
-			SDPMLineIndex:    init.SDPMLineIndex,
-			SDPMid:           init.SDPMid,
-			UsernameFragment: init.UsernameFragment,
-		})
-	})
-
-	pc.OnConnectionStateChange(func(s webrtc.PeerConnectionState) {
-		log.Printf("peer connection state for %s: %s", r.RemoteAddr, s.String())
-		if s == webrtc.PeerConnectionStateConnected && videoStreamer != nil {
-			videoStreamer.Start()
-		}
-	})
-
-	// stopVideo stops the capture pipeline (if any) once for this connection.
-	stopVideo := func() {
-		if videoStreamer != nil {
-			videoStreamer.Stop()
-			videoStreamer = nil
-		}
-	}
-	defer stopVideo()
-
-	// When this client goes away, release any tool/contact state it left
-	// behind. If a stroke/gesture was active when the data channel dropped or
-	// the client backgrounded the page, its tip-up/pointerup was lost and the
-	// virtual device would otherwise stay "down" — making the next client's
-	// first touch invisible until it lifted and re-touched.
-	defer tabletDev.Reset()
-	defer pad.Reset()
-
-	for {
-		_, data, err := ws.ReadMessage()
-		if err != nil {
-			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseNormalClosure) {
-				log.Printf("websocket read error from %s: %v", r.RemoteAddr, err)
-			}
-			return
-		}
-
-		var msg signalMsg
-		if err := json.Unmarshal(data, &msg); err != nil {
-			log.Printf("bad signal message from %s: %v", r.RemoteAddr, err)
-			continue
-		}
-
-		switch msg.Type {
-		case "offer":
-			if err := pc.SetRemoteDescription(webrtc.SessionDescription{
-				Type: webrtc.SDPTypeOffer,
-				SDP:  msg.SDP,
-			}); err != nil {
-				log.Printf("setRemoteDescription failed: %v", err)
-				continue
-			}
-
-			// If the offer requests video and video is enabled, build the
-			// capture pipeline and add its track before answering. Failure
-			// is non-fatal: we answer without a video track and the client
-			// keeps using trackpad/tablet.
-			if videoEnabled && hasVideoMedia(msg.SDP) && videoStreamer == nil {
-				vs, err := video.New(video.Config{
-					Source:    cli.VideoSource,
-					Encoder:   cli.VideoEncoder,
-					CardPath:  cli.VideoCard,
-					MaxWidth:  cli.VideoWidth,
-					FrameRate: cli.VideoFps,
-					QP:        cli.VideoQP,
-					LowPower:  cli.LowPower,
-				})
-				if err != nil {
-					log.Printf("video unavailable for %s: %v", r.RemoteAddr, err)
-					log.Printf("  if you do not need desktop video, run with --video-source=none to suppress this; if you do, make sure CAP_SYS_ADMIN is granted and a VAAPI-capable GPU is present")
-				} else {
-					if _, err := pc.AddTrack(vs.Track()); err != nil {
-						log.Printf("add video track failed for %s: %v", r.RemoteAddr, err)
-						vs.Stop()
-					} else {
-						videoStreamer = vs
-						log.Printf("video track added for %s", r.RemoteAddr)
-					}
-				}
-			}
-
-			answer, err := pc.CreateAnswer(nil)
-			if err != nil {
-				log.Printf("createAnswer failed: %v", err)
-				continue
-			}
-			if err := pc.SetLocalDescription(answer); err != nil {
-				log.Printf("setLocalDescription failed: %v", err)
-				continue
-			}
-			write(signalMsg{Type: "answer", SDP: answer.SDP})
-
-		case "candidate":
-			if err := pc.AddICECandidate(webrtc.ICECandidateInit{
-				Candidate:        msg.Candidate,
-				SDPMLineIndex:    msg.SDPMLineIndex,
-				SDPMid:           msg.SDPMid,
-				UsernameFragment: msg.UsernameFragment,
-			}); err != nil {
-				log.Printf("addIceCandidate failed: %v", err)
-			}
-
-		default:
-			log.Printf("unknown signal type from %s: %s", r.RemoteAddr, msg.Type)
-		}
-	}
 }
 
 func certDirectory() (string, error) {
@@ -530,13 +378,6 @@ func certFingerprint(path string) (string, error) {
 	}
 	sum := sha256.Sum256(cert.Raw)
 	return hex.EncodeToString(sum[:]), nil
-}
-
-// hasVideoMedia reports whether an SDP description contains a video media
-// section (m=video). We use it to decide whether to build the capture
-// pipeline before answering.
-func hasVideoMedia(sdp string) bool {
-	return strings.Contains(sdp, "m=video")
 }
 
 // isWaylandSession reports whether the current graphical session is Wayland.
