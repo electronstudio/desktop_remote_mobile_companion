@@ -22,6 +22,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/alexflint/go-arg"
 	"github.com/electronstudio/desktop_remote_mobile_companion/input"
 	"github.com/electronstudio/desktop_remote_mobile_companion/signaling"
 	"github.com/electronstudio/desktop_remote_mobile_companion/tablet"
@@ -47,13 +48,31 @@ type CLI struct {
 	Port int `arg:"-p,--port" default:"8080" help:"HTTPS listen port"`
 
 	VideoSource   string `arg:"--video-source" default:"kmsgrab" help:"desktop video capture source: \"kmsgrab\" (DRM, default), \"x11grab\" (X server), or \"none\" to disable video"`
-	VideoEncoder  string `arg:"--video-encoder" default:"" help:"video H264 encoder: vaapi, nvenc, libx264, or auto (default: nvenc on NVIDIA, else vaapi, else libx264)"`
+	VideoEncoder  string `arg:"--video-encoder" default:"auto" help:"video H264 encoder: vaapi, nvenc, libx264, or auto (default: nvenc on NVIDIA, else vaapi, else libx264)"`
 	VideoCard     string `arg:"--video-card" default:"" help:"DRM card to capture (e.g. /dev/dri/card1); empty auto-detects"`
 	VideoFps      int    `arg:"--video-fps" default:"30" help:"video capture frame rate"`
 	VideoQP       int    `arg:"--video-qp" default:"24" help:"encoder quality (h264_vaapi/nvenc QP or libx264 CRF; lower is higher quality)"`
 	VideoWidth    int    `arg:"--video-width" default:"0" help:"cap video output width; 0 native"`
 	LowPower      int    `arg:"--low-power" default:"0" help:"h264_vaapi low-power mode (0 or 1); ignored for other encoders"`
 	DontGrabMouse bool   `arg:"--dont-grab-mouse" default:"false" help:"disable the tablet hover keep-alive (Mutter cooldown workaround); use on compositors without the cooldown (e.g. wlroots) so the mouse is not grabbed while idle"`
+	DontRunSudo   bool   `arg:"--dont-run-sudo" default:"false" help:"do not try to gain privileges with sudo"`
+}
+
+// CLIDefaults returns a CLI populated with the go-arg `default:` struct-tag
+// values (no command-line parsing), so callers that bypass go-arg — e.g. the
+// companion_gui, which has no CLI flags — can still take their starting
+// configuration from the same defaults the CLI binary uses. It parses an
+// empty argument list, so every field gets exactly its tag default.
+func CLIDefaults() CLI {
+	var cli CLI
+	p, err := arg.NewParser(arg.Config{Program: "companion"}, &cli)
+	if err != nil {
+		panic(err) // only possible if the CLI struct tags are malformed
+	}
+	if err := p.Parse(nil); err != nil {
+		panic(err) // an empty arg list can only fail on a malformed default tag
+	}
+	return cli
 }
 
 // Compile-time checks that the concrete device interfaces satisfy the
@@ -184,6 +203,7 @@ func Run(cli CLI) {
 			log.Printf("warning: could not check CAP_SYS_ADMIN (%v); desktop video may fail", err)
 		} else if !ok {
 			toast.Show("error: desktop video streaming", videoMissingCapInstructions, false)
+			color.Set(color.FgRed)
 			log.Printf("error: desktop video streaming: the process lacks CAP_SYS_ADMIN, which kmsgrab needs to capture the framebuffer.")
 			// File capabilities (setcap) are the preferred fix, but they are
 			// silently ignored on nosuid mounts, so give the right advice for
@@ -199,7 +219,10 @@ func Run(cli CLI) {
 				log.Print(videoMissingCapInstructions)
 			}
 			color.Unset()
-			reExecWithSudo()
+			if !cli.DontRunSudo {
+				reExecWithSudo()
+			}
+			videoEnabled = false
 		}
 	}
 

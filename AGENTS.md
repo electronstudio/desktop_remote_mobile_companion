@@ -35,7 +35,7 @@ github.com/electronstudio/desktop_remote_mobile_companion
 ```
 
 - `cmd/companion/main.go` — the `companion` CLI binary entry point: parses command-line flags (via `go-arg`) and calls `server.Run`.
-- `cmd/companion_gui/main.go` — the `companion_gui` binary entry point: a Fyne GUI with a single "Start" button that runs `server.Run` in a goroutine with default flags (no CLI parsing).
+- `cmd/companion_gui/main.go` — the `companion_gui` binary entry point: a Fyne GUI with a "Start" button that runs `server.Run` in a goroutine with default flags (no CLI parsing), plus a read-only scrollable log text area that mirrors everything written via the standard `log` package (any package) through a process-global `log.SetOutput(io.MultiWriter(os.Stderr, ...))` redirect; a bounded line buffer + `fyne.Do` flush goroutine keeps the widget updated thread-safely.
 - `server/server.go` — the shared server library: HTTPS server, self-signed certificate generation, static/index serving, virtual-device creation, and version injection, exposed as `server.Run(cli CLI)`. The `/signal` WebSocket handler upgrades the connection and delegates to a `signaling.Session`, so `server.go` no longer contains WebRTC or device-routing logic.
 - `server/platform_linux.go` — platform/capability helpers (`hasCapSysAdmin`, `onNoSuidMount`, `reExecWithSudo`, privilege dropping), moved into the `server` package.
 - `server/platform_windows.go` — Windows stubs of the platform helpers.

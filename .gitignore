@@ -1,5 +1,7 @@
-companion
-companion_gui
+# Built binaries at repo root only — anchored with / so they do not match
+# the cmd/companion and cmd/companion_gui source directories.
+/companion
+/companion_gui
 *.exe
 server.crt
 server.key

@@ -157,6 +157,7 @@ func reExecWithSudo() {
 	// Prepare the arguments for the new process.
 	// We prepend the executable path to the existing arguments (skipping the original program name).
 	args := append([]string{executable}, os.Args[1:]...)
+	args = append(args, "--dont-run-sudo")
 
 	// Create the exec.Cmd to run the command via sudo
 	cmd := exec.Command("sudo", args...)
