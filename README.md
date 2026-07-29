@@ -1,17 +1,21 @@
 # Inara: the Desktop Remote Mobile Companion
 
 [![AI-DECLARATION: copilot](https://img.shields.io/badge/䷼%20AI--DECLARATION-copilot-fee2e2?labelColor=fee2e2)](https://ai-declaration.md)
+
 Connect your mobile device wirelessly to your PC and use it as:
 
-* Trackpad
-* Graphics tablet
-* Display mirroring (Intel/AMD only)
-* ~~Camera~~ (TO DO)
-* ~~Microphone~~ (TO DO)
-* ~~Keyboard~~ (TO DO)
-* ~~Clipboard~~ (TO DO)
-* ~~Extra display~~ (TO DO)
-* ~~Game controller~~ (TO DO)
+| Feature               | Linux Wayland    | Linux X11 | Windows | Macos |
+|-----------------------|------------------|-----------|---------|-------|
+| Trackpad              | ✅               | ✅        | ❌      | ❌    |
+| Graphics tablet       | ✅               | ✅        | ❌      | ❌    |
+| Display mirror        | ✅   (Intel/AMD) | ✅        | ❌      | ❌    |
+| ~~Camera~~            | ❌               | ❌        | ❌      | ❌    |
+| ~~Microphone~~        | ❌               | ❌        | ❌      | ❌    |
+| ~~Keyboard~~          | ❌               | ❌        | ❌      | ❌    |
+| ~~Clipboard~~         | ❌               | ❌        | ❌      | ❌    |
+| ~~Extra display~~     | ❌               | ❌        | ❌      | ❌    |
+| ~~Game controller~~   | ❌               | ❌        | ❌      | ❌    |
+| ~~File send/receive~~ | ❌               | ❌        | ❌      | ❌    |
 
 Tested desktops: Gnome Wayland, XFCE X11.
 
@@ -57,7 +61,9 @@ If you can't see your mouse pointer, you need to disable hardware cursor:
 
 By default when the tablet tool is active it keeps the tablet 'hovering'
 which prevents use of a mouse until you switch away from the tool.
-This is required by some software such as Gnome.  But you can disable it...
+This is required by some software such as Gnome.  But you can disable it:
+
+    companion --dont-grab-mouse
 
 ## Security
 

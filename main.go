@@ -47,15 +47,14 @@ var upgrader = websocket.Upgrader{
 var cli struct {
 	Port int `arg:"-p,--port" default:"8080" help:"HTTPS listen port"`
 
-	VideoSource  string `arg:"--video-source" default:"kmsgrab" help:"desktop video capture source: \"kmsgrab\" (DRM, default), \"x11grab\" (X server), or \"none\" to disable video"`
-	VideoEncoder string `arg:"--video-encoder" default:"" help:"video H264 encoder: vaapi, nvenc, libx264, or auto (default: nvenc on NVIDIA, else vaapi, else libx264)"`
-	VideoCard    string `arg:"--video-card" default:"" help:"DRM card to capture (e.g. /dev/dri/card1); empty auto-detects"`
-	VideoFps     int    `arg:"--video-fps" default:"30" help:"video capture frame rate"`
-	VideoQP      int    `arg:"--video-qp" default:"24" help:"encoder quality (h264_vaapi/nvenc QP or libx264 CRF; lower is higher quality)"`
-	VideoWidth   int    `arg:"--video-width" default:"0" help:"cap video output width; 0 native"`
-	LowPower     int    `arg:"--low-power" default:"0" help:"h264_vaapi low-power mode (0 or 1); ignored for other encoders"`
-
-	NoTabletKeepalive bool `arg:"--no-tablet-keepalive" default:"false" help:"disable the tablet hover keep-alive (Mutter cooldown workaround); use on compositors without the cooldown (e.g. wlroots) so the mouse is not grabbed while idle"`
+	VideoSource   string `arg:"--video-source" default:"kmsgrab" help:"desktop video capture source: \"kmsgrab\" (DRM, default), \"x11grab\" (X server), or \"none\" to disable video"`
+	VideoEncoder  string `arg:"--video-encoder" default:"" help:"video H264 encoder: vaapi, nvenc, libx264, or auto (default: nvenc on NVIDIA, else vaapi, else libx264)"`
+	VideoCard     string `arg:"--video-card" default:"" help:"DRM card to capture (e.g. /dev/dri/card1); empty auto-detects"`
+	VideoFps      int    `arg:"--video-fps" default:"30" help:"video capture frame rate"`
+	VideoQP       int    `arg:"--video-qp" default:"24" help:"encoder quality (h264_vaapi/nvenc QP or libx264 CRF; lower is higher quality)"`
+	VideoWidth    int    `arg:"--video-width" default:"0" help:"cap video output width; 0 native"`
+	LowPower      int    `arg:"--low-power" default:"0" help:"h264_vaapi low-power mode (0 or 1); ignored for other encoders"`
+	DontGrabMouse bool   `arg:"--dont-grab-mouse" default:"false" help:"disable the tablet hover keep-alive (Mutter cooldown workaround); use on compositors without the cooldown (e.g. wlroots) so the mouse is not grabbed while idle"`
 }
 
 // Compile-time checks that the concrete device interfaces satisfy the
@@ -109,7 +108,7 @@ func main() {
 	}
 	defer pad.Close()
 
-	tabletDev, err := tablet.New(!cli.NoTabletKeepalive)
+	tabletDev, err := tablet.New(!cli.DontGrabMouse)
 	if err != nil {
 		toast.Show("failed to register virtual graphics tablet", uinputInstructions, true)
 		color.Set(color.FgYellow)

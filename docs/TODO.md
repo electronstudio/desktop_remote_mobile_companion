@@ -1,5 +1,3 @@
-change the flag for disabling keepalive to be more descriptive, call it
-tablet exclusive mode and document it
 
 check that we are using coalesced events
 
