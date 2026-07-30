@@ -1,0 +1,14 @@
+#!/bin/sh
+set -e
+
+# Grant the file capabilities the server needs to create uinput devices,
+# open /dev/uinput after dropping privileges, and capture the desktop via
+# kmsgrab (CAP_SYS_ADMIN), without running as root. Mirrors the setcap in
+# the Makefile. On filesystems that reject file capabilities (e.g. nosuid
+# mounts) setcap fails; do not fail the package installation in that case.
+if [ "$1" = "configure" ]; then
+    setcap cap_sys_admin,cap_dac_override,cap_setpcap=p /usr/bin/companion || true
+    setcap cap_sys_admin,cap_dac_override,cap_setpcap=p /usr/bin/companion_gui || true
+fi
+
+exit 0

@@ -106,6 +106,54 @@ jobs:
           name: desktop_remote_mobile_companion-linux-x86_64-${{ needs.get-version.outputs.version }}
           path: dist/desktop_remote_mobile_companion-linux-x86_64-${{ needs.get-version.outputs.version }}
 
+      - name: Build Debian package
+        run: |
+          set -euo pipefail
+          version="${{ needs.get-version.outputs.version }}-1"
+          arch=amd64
+          pkg=desktop-remote-mobile-companion
+          root="build/deb/${pkg}"
+
+          # Generate shared-library dependencies from the built binaries
+          # (FFmpeg is statically linked, so only glibc/X11/GL/wayland
+          # GUI libs appear). setcap in postinst comes from libcap2-bin.
+          # dpkg-shlibdeps refuses to run without a debian/control, so
+          # create a minimal temporary one just for the dependency scan.
+          mkdir -p debian
+          printf 'Source: %s\nMaintainer: Richard Smith <deb@electronstudio.co.uk>\n\nPackage: %s\nArchitecture: %s\nDescription: temporary control for dpkg-shlibdeps\n' \
+            "${pkg}" "${pkg}" "${arch}" > debian/control
+          deps=$(dpkg-shlibdeps -O companion companion_gui \
+            | sed -e 's/^shlibs:Depends=//' -e 's/, /\n/g' | sort -u | paste -sd, - | sed 's/,/, /g')
+          rm -rf debian
+          deps="${deps}, libcap2-bin"
+
+          # Data tree, mirroring `make install DESTDIR=... PREFIX=/usr`.
+          install -Dm755 companion "${root}/usr/bin/companion"
+          install -Dm755 companion_gui "${root}/usr/bin/companion_gui"
+          mkdir -p "${root}/usr/share/applications"
+          sed 's|@BINDIR@|/usr/bin|' companion.desktop.in \
+            > "${root}/usr/share/applications/companion.desktop"
+          install -Dm644 server/static/icon-512.png \
+            "${root}/usr/share/icons/hicolor/512x512/apps/companion.png"
+          install -Dm644 LICENSE \
+            "${root}/usr/share/doc/${pkg}/copyright"
+
+          # Control files (setcap is done by postinst, which runs as root).
+          mkdir -p "${root}/DEBIAN"
+          sed -e "s/@VERSION@/${version}/" -e "s/@ARCH@/${arch}/" \
+              -e "s/@DEPENDS@/${deps}/" packaging/deb/control \
+              > "${root}/DEBIAN/control"
+          install -m755 packaging/deb/postinst "${root}/DEBIAN/postinst"
+
+          dpkg-deb --root-owner-group --build "${root}" \
+            "dist/${pkg}_${version}_${arch}.deb"
+
+      - name: Upload Debian package
+        uses: actions/upload-artifact@v7
+        with:
+          name: desktop_remote_mobile_companion-deb-x86_64-${{ needs.get-version.outputs.version }}
+          path: dist/desktop-remote-mobile-companion_*.deb
+
 
   build-windows:
     needs: get-version
@@ -312,6 +360,8 @@ jobs:
               chmod +x "artifacts/$name/companion"
               chmod +x "artifacts/$name/companion_gui"
               (cd artifacts && tar -cJf "../$outdir/$name.tar.xz" "$name")
+            elif [[ "$name" == desktop_remote_mobile_companion-deb-* ]]; then
+              cp "artifacts/$name"/*.deb "$outdir/"
             else
               (cd artifacts && zip -r "../$outdir/$name.zip" "$name")
             fi

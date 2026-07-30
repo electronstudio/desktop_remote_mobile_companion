@@ -6,6 +6,10 @@ This file contains the context coding agents need to work on this project.
 
 Always increment the minor version number sored in VERISON file before doing a build, e.g. server/VERSION 0.3.7 becomes 0.3.8.
 
+# Packaging
+
+`.github/workflows/build.yml` builds Linux (x86_64) and Windows artifacts and also produces a Debian/Ubuntu `.deb` in the `build-linux` job: the package tree mirrors `make install` (`companion` + `companion_gui` in `/usr/bin`, desktop file, hicolor icon, LICENSE as copyright), `Depends:` is generated with `dpkg-shlibdeps` (FFmpeg is statically linked), and `packaging/deb/postinst` applies the `setcap cap_sys_admin,cap_dac_override,cap_setpcap=p` grant to both binaries at install time (as the Makefile does). The control-file/postinst templates live in `packaging/deb/`. The `.deb` is uploaded as its own artifact and also copied uncompressed into the combined "all" artifact by the `combine` job.
+
 ## Project overview
 
 This project turns a mobile device into a multitouch trackpad/remote input device for a Linux desktop PC. The Go program:

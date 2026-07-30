@@ -1,0 +1,16 @@
+Package: desktop-remote-mobile-companion
+Version: @VERSION@
+Architecture: @ARCH@
+Maintainer: Richard Smith <deb@electronstudio.co.uk>
+Section: utils
+Priority: optional
+Depends: @DEPENDS@
+Homepage: https://github.com/electronstudio/desktop_remote_mobile_companion
+Description: Use a mobile device as a wireless trackpad and graphics tablet
+ Connect your mobile device wirelessly to your PC and use it as a
+ multitouch trackpad, graphics tablet, etc. The package provides the
+ 'companion' CLI server and the 'companion_gui' desktop application.
+ The server streams the desktop to the phone and injects the phone's
+ pointer input via uinput; file capabilities (cap_sys_admin et al.) are
+ granted to the binaries at install time so DRM desktop capture works
+ without running as root.
