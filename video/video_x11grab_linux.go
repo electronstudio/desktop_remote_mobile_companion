@@ -68,9 +68,6 @@ func newX11grabStreamer(cfg Config) (*x11grabStreamer, error) {
 	if cfg.QP <= 0 {
 		cfg.QP = 24
 	}
-	if cfg.LowPower != 0 && cfg.LowPower != 1 {
-		cfg.LowPower = 1
-	}
 
 	display := os.Getenv("DISPLAY")
 	if display == "" {

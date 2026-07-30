@@ -20,6 +20,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -106,6 +107,26 @@ func (lv *logView) flushLoop() {
 	}
 }
 
+// driDevices returns the names of the device nodes in /dev/dri (e.g.
+// "card1", "renderD128"), sorted, with the empty string prepended as the
+// first option, meaning auto-detect. On any error (directory missing, e.g.
+// on Windows) it returns just the auto-detect option so the GUI still works.
+func driDevices() []string {
+	names := []string{""}
+	entries, err := os.ReadDir("/dev/dri")
+	if err != nil {
+		return names
+	}
+	for _, e := range entries {
+		if e.IsDir() { // skip by-path/
+			continue
+		}
+		names = append(names, e.Name())
+	}
+	sort.Strings(names[1:])
+	return names
+}
+
 func main() {
 	// Default server configuration, taken from the go-arg `default:` struct
 	// tags on server.CLI so the GUI starts with the same configuration as
@@ -153,10 +174,54 @@ func main() {
 	}
 	videoEncoderSelect.SetSelected(cli.VideoEncoder)
 
+	// Video card selector: every device node in /dev/dri, enumerated once at
+	// startup. The first option is auto-detect, stored as "" in cli.VideoCard
+	// (an empty string would render as a blank dropdown row, so it is
+	// displayed as "auto-detect" instead).
+	const videoCardAuto = "auto-detect"
+	cardOptions := make([]string, 0, 8)
+	for _, name := range driDevices() {
+		if name == "" {
+			cardOptions = append(cardOptions, videoCardAuto)
+		} else {
+			cardOptions = append(cardOptions, name)
+		}
+	}
+	videoCardSelect := widget.NewSelect(cardOptions, func(s string) {
+		if s == videoCardAuto {
+			cli.VideoCard = ""
+		} else {
+			cli.VideoCard = "/dev/dri/" + s
+		}
+	})
+	videoCardSelect.SetSelected(videoCardAuto)
+
+	// Video FPS entry: like the port entry, invalid or non-positive input is
+	// silently ignored so a half-typed value cannot break the server start.
+	videoFpsEntry := widget.NewEntry()
+	videoFpsEntry.SetText(strconv.Itoa(cli.VideoFps))
+	videoFpsEntry.OnChanged = func(s string) {
+		if fps, err := strconv.Atoi(strings.TrimSpace(s)); err == nil && fps > 0 {
+			cli.VideoFps = fps
+		}
+	}
+
+	intelFastCheck := widget.NewCheck("Intel GPU fast mode", func(on bool) {
+		cli.VideoIntelFast = on
+	})
+	intelFastCheck.SetChecked(cli.VideoIntelFast)
+
+	dontGrabCheck := widget.NewCheck("Don't grab mouse", func(on bool) {
+		cli.DontGrabMouse = on
+	})
+	dontGrabCheck.SetChecked(cli.DontGrabMouse)
+
 	form := widget.NewForm(
 		widget.NewFormItem("Port", portEntry),
 		widget.NewFormItem("Video source", videoSourceSelect),
 		widget.NewFormItem("Video encoder", videoEncoderSelect),
+		widget.NewFormItem("Video card", videoCardSelect),
+		widget.NewFormItem("Video FPS", videoFpsEntry),
 	)
 
 	start := widget.NewButton("Start", nil)
@@ -168,6 +233,10 @@ func main() {
 		portEntry.Disable()
 		videoSourceSelect.Disable()
 		videoEncoderSelect.Disable()
+		videoCardSelect.Disable()
+		videoFpsEntry.Disable()
+		intelFastCheck.Disable()
+		dontGrabCheck.Disable()
 		// Run the server in the background so the window stays responsive.
 		// The server blocks forever (ListenAndServeTLS); it has no stop path,
 		// so closing the window exits the whole process (see SetOnClosed).
@@ -183,11 +252,11 @@ func main() {
 		}
 		fmt.Printf("Fixing permissions: %s\n", executable)
 		cmd := exec.Command("pkexec", "/sbin/setcap", "cap_sys_admin,cap_dac_override,cap_setpcap=p", executable)
-		cmd.Run()
+		_ = cmd.Run()
 		os.Exit(0)
 	}
 
-	top := container.NewVBox(form, fix_permissions, start)
+	top := container.NewVBox(form, intelFastCheck, dontGrabCheck, fix_permissions, start)
 	w.SetContent(container.NewBorder(top, nil, nil, nil, logs.scroll))
 	w.Resize(fyne.NewSize(640, 480))
 

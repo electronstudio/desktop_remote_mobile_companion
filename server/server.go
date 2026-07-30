@@ -47,15 +47,15 @@ var upgrader = websocket.Upgrader{
 type CLI struct {
 	Port int `arg:"-p,--port" default:"8080" help:"HTTPS listen port"`
 
-	VideoSource   string `arg:"--video-source" default:"kmsgrab" help:"desktop video capture source: \"kmsgrab\" (DRM, default), \"x11grab\" (X server), or \"none\" to disable video"`
-	VideoEncoder  string `arg:"--video-encoder" default:"auto" help:"video H264 encoder: vaapi, nvenc, libx264, or auto (default: nvenc on NVIDIA, else vaapi, else libx264)"`
-	VideoCard     string `arg:"--video-card" default:"" help:"DRM card to capture (e.g. /dev/dri/card1); empty auto-detects"`
-	VideoFps      int    `arg:"--video-fps" default:"30" help:"video capture frame rate"`
-	VideoQP       int    `arg:"--video-qp" default:"24" help:"encoder quality (h264_vaapi/nvenc QP or libx264 CRF; lower is higher quality)"`
-	VideoWidth    int    `arg:"--video-width" default:"0" help:"cap video output width; 0 native"`
-	LowPower      int    `arg:"--low-power" default:"0" help:"h264_vaapi low-power mode (0 or 1); ignored for other encoders"`
-	DontGrabMouse bool   `arg:"--dont-grab-mouse" default:"false" help:"disable the tablet hover keep-alive (Mutter cooldown workaround); use on compositors without the cooldown (e.g. wlroots) so the mouse is not grabbed while idle"`
-	DontRunSudo   bool   `arg:"--dont-run-sudo" default:"false" help:"do not try to gain privileges with sudo"`
+	VideoSource    string `arg:"--video-source" default:"kmsgrab" help:"desktop video capture source: \"kmsgrab\" (DRM, default), \"x11grab\" (X server), or \"none\" to disable video"`
+	VideoEncoder   string `arg:"--video-encoder" default:"auto" help:"video H264 encoder: vaapi, nvenc, libx264, or auto (default: nvenc on NVIDIA, else vaapi, else libx264)"`
+	VideoCard      string `arg:"--video-card" default:"" help:"DRM card to capture (e.g. /dev/dri/card1); empty auto-detects"`
+	VideoFps       int    `arg:"--video-fps" default:"30" help:"video capture frame rate"`
+	VideoQP        int    `arg:"--video-qp" default:"24" help:"encoder quality (h264_vaapi/nvenc QP or libx264 CRF; lower is higher quality)"`
+	VideoWidth     int    `arg:"--video-width" default:"0" help:"cap video output width; 0 native"`
+	VideoIntelFast bool   `arg:"--video-intel-fast" default:"false" help:"enable h264_vaapi low-power mode; ignored for other encoders"`
+	DontGrabMouse  bool   `arg:"--dont-grab-mouse" default:"false" help:"disable the tablet hover keep-alive (Mutter cooldown workaround); use on compositors without the cooldown (e.g. wlroots) so the mouse is not grabbed while idle"`
+	DontRunSudo    bool   `arg:"--dont-run-sudo" default:"false" help:"do not try to gain privileges with sudo"`
 }
 
 // CLIDefaults returns a CLI populated with the go-arg `default:` struct-tag
@@ -156,7 +156,7 @@ func Run(cli CLI) {
 		MaxWidth:  cli.VideoWidth,
 		FrameRate: cli.VideoFps,
 		QP:        cli.VideoQP,
-		LowPower:  cli.LowPower,
+		LowPower:  cli.VideoIntelFast,
 	}
 
 	// processors routes data-channel events to the virtual input device that
@@ -255,7 +255,7 @@ func Run(cli CLI) {
 				log.Printf("  capture card: auto-detect")
 			}
 		}
-		log.Printf("  fps=%d qp=%d low-power=%d", cli.VideoFps, cli.VideoQP, cli.LowPower)
+		log.Printf("  fps=%d qp=%d low-power=%d", cli.VideoFps, cli.VideoQP, cli.VideoIntelFast)
 	} else if cli.VideoSource == "none" {
 		log.Printf("desktop video streaming disabled (--video-source=none)")
 	} else {

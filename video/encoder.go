@@ -189,8 +189,8 @@ func newEncoder(cfg Config, kind sourceKind) (*encoder, error) {
 	}
 
 	log.Printf("video: encoder selected: %s (source=%s)", label, kind)
-	if cfg.LowPower != 0 && label != encVaapi {
-		log.Printf("video: --low-power is a vaapi-only option; ignored for %s", label)
+	if cfg.LowPower && label != encVaapi {
+		log.Printf("video: low-power is a vaapi-only option; ignored for %s", label)
 	}
 	return e, nil
 }
@@ -296,9 +296,9 @@ func (e *encoder) initFilterGraph(decodeCodecContext *astiav.CodecContext, decod
 // original kmsgrab pipeline exactly; the others follow the equivalent ffmpeg
 // command lines.
 func (e *encoder) filterGraphDesc(srcWidth int) string {
-	cap := e.cfg.MaxWidth > 0 && srcWidth > e.cfg.MaxWidth
+	capped := e.cfg.MaxWidth > 0 && srcWidth > e.cfg.MaxWidth
 	width := func() string {
-		if cap {
+		if capped {
 			return fmt.Sprintf("w=%d:h=-2", e.cfg.MaxWidth)
 		}
 		return ""
@@ -306,7 +306,7 @@ func (e *encoder) filterGraphDesc(srcWidth int) string {
 
 	switch {
 	case e.kind == sourceKmsgrab && e.label == encVaapi:
-		if cap {
+		if capped {
 			return fmt.Sprintf("hwmap=derive_device=vaapi,scale_vaapi=w=%d:format=nv12", e.cfg.MaxWidth)
 		}
 		return "hwmap=derive_device=vaapi,scale_vaapi=format=nv12"
@@ -314,25 +314,25 @@ func (e *encoder) filterGraphDesc(srcWidth int) string {
 	case e.kind == sourceKmsgrab && e.label == encLibx264:
 		// Download the vaapi frame to the CPU for software encoding.
 		base := "hwmap=derive_device=vaapi,scale_vaapi=format=nv12"
-		if cap {
+		if capped {
 			base = fmt.Sprintf("hwmap=derive_device=vaapi,scale_vaapi=w=%d:format=nv12", e.cfg.MaxWidth)
 		}
 		return base + ",hwdownload,format=yuv420p"
 
 	case e.kind == sourceX11grab && e.label == encLibx264:
-		if cap {
+		if capped {
 			return fmt.Sprintf("scale=%s,format=yuv420p", width())
 		}
 		return "format=yuv420p"
 
 	case e.kind == sourceX11grab && e.label == encVaapi:
-		if cap {
+		if capped {
 			return fmt.Sprintf("scale=%s,format=nv12,hwupload=derive_device=vaapi", width())
 		}
 		return "format=nv12,hwupload=derive_device=vaapi"
 
 	case e.kind == sourceX11grab && e.label == encNvenc:
-		if cap {
+		if capped {
 			return fmt.Sprintf("scale=%s,format=nv12,hwupload=derive_device=cuda", width())
 		}
 		return "format=nv12,hwupload=derive_device=cuda"
@@ -385,8 +385,10 @@ func (e *encoder) initEncoder() error {
 		}
 		// low_power: 1 = fixed-function encode engine (faster, lower GPU
 		// usage, slightly lower quality); 0 = shader-based encoder.
-		if err := opts.Set("low_power", fmt.Sprintf("%d", e.cfg.LowPower), astiav.NewDictionaryFlags()); err != nil {
-			return fmt.Errorf("video: set low_power option: %w", err)
+		if e.cfg.LowPower {
+			if err := opts.Set("low_power", "1", astiav.NewDictionaryFlags()); err != nil {
+				return fmt.Errorf("video: set low_power option: %w", err)
+			}
 		}
 	case encNvenc:
 		// Constant-QP rate control, zero B-frames for WebRTC ordering.

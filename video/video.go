@@ -63,7 +63,7 @@ type Config struct {
 	// LowPower selects h264_vaapi low-power mode (0 = off, 1 = on). On means
 	// the encoder uses the fixed-function encode engine, which is faster and
 	// uses less GPU but may have slightly lower quality / fewer features.
-	LowPower int
+	LowPower bool
 }
 
 // Streamer owns a capture + encode pipeline and the Pion H264 track that

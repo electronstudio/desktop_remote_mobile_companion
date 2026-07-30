@@ -93,9 +93,6 @@ func newKmsgrabStreamer(cfg Config) (*kmsgrabStreamer, error) {
 	if cfg.QP <= 0 {
 		cfg.QP = 24
 	}
-	if cfg.LowPower != 0 && cfg.LowPower != 1 {
-		cfg.LowPower = 1
-	}
 	if cfg.CardPath == "" {
 		card, err := autoDetectCard()
 		if err != nil {
@@ -125,7 +122,7 @@ func newKmsgrabStreamer(cfg Config) (*kmsgrabStreamer, error) {
 		done:  make(chan struct{}),
 	}
 
-	log.Printf("video: opening kmsgrab capture pipeline on %s (%dfps, qp %d, low-power %d)", cfg.CardPath, cfg.FrameRate, cfg.QP, cfg.LowPower)
+	log.Printf("video: opening kmsgrab capture pipeline on %s (%dfps, qp %d, low-power %t)", cfg.CardPath, cfg.FrameRate, cfg.QP, cfg.LowPower)
 
 	// Register FFmpeg devices (kmsgrab is an input device) and open the
 	// capture source up front so New fails fast if the hardware is missing.
@@ -188,7 +185,7 @@ func autoDetectCard() (string, error) {
 	for _, m := range matches {
 		f, err := os.OpenFile(m, os.O_RDWR, 0)
 		if err == nil {
-			f.Close()
+			_ = f.Close()
 			return m, nil
 		}
 	}
@@ -206,7 +203,7 @@ func (s *kmsgrabStreamer) initKmsgrab() error {
 	c, err := orig.Dup()
 	if err == nil {
 		if err := c.SetFlag(cap.Effective, true, cap.SYS_ADMIN); err == nil {
-			c.SetProc()
+			_ = c.SetProc()
 		}
 	}
 
