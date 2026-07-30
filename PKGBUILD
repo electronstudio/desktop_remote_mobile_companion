@@ -28,8 +28,7 @@ build() {
 
 package() {
   cd "$srcdir/desktop_remote_mobile_companion"
-  mkdir -p "$pkgdir/usr/bin"
-  cp companion "$pkgdir/usr/bin/companion"
-  cp companion_gui "$pkgdir/usr/bin/companion_gui"
-  setcap cap_sys_admin,cap_dac_override,cap_setpcap=p "$pkgdir/usr/bin/companion"
+  make -f Makefile install DESTDIR="$pkgdir" PREFIX=/usr
+  rm -f "$pkgdir/usr/share/applications/mimeinfo.cache"
+  rm -f "$pkgdir/usr/share/icons/hicolor/icon-theme.cache"
 }

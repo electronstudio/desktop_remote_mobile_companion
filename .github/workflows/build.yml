@@ -87,10 +87,10 @@ jobs:
           make install
 
       - name: Build
-        run: go build -o companion -ldflags "-linkmode external" ./cmd/companion
+        run: go build -o companion -ldflags "-s -w -linkmode external" ./cmd/companion
 
       - name: Build GUI (companion_gui)
-        run: go build -tags migrated_fynedo -o companion_gui -ldflags "-linkmode external" ./cmd/companion_gui
+        run: go build -tags migrated_fynedo -o companion_gui -ldflags "-s -w -linkmode external" ./cmd/companion_gui
 
       - name: Stage artifact
         run: |
@@ -239,7 +239,7 @@ jobs:
         shell: msys2 {0}
         run: |
           export PKG_CONFIG_PATH="$FFMPEG_PREFIX/lib/pkgconfig"
-          go build -ldflags "-linkmode external" -o companion.exe ./cmd/companion
+          go build -ldflags "-s -w -linkmode external" -o companion.exe ./cmd/companion
 
       - name: Stage artifact
         shell: msys2 {0}
@@ -310,6 +310,7 @@ jobs:
             name=$(basename "$dir")
             if [[ "$name" == desktop_remote_mobile_companion-linux-* ]]; then
               chmod +x "artifacts/$name/companion"
+              chmod +x "artifacts/$name/companion_gui"
               (cd artifacts && tar -cJf "../$outdir/$name.tar.xz" "$name")
             else
               (cd artifacts && zip -r "../$outdir/$name.zip" "$name")

@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Desktop Remote Mobile Companion
+GenericName=Companion
+Comment=Desktop remote mobile companion
+Icon=companion
+Exec=@BINDIR@/companion_gui
+Categories=Utility;
+StartupNotify=false
