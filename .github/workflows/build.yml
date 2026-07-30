@@ -29,6 +29,10 @@ jobs:
     env:
       FFMPEG_PREFIX: ${{ github.workspace }}/ffmpeg
       CGO_ENABLED: "1"
+      CGO_CFLAGS: -I${{ github.workspace }}/ffmpeg/include
+      CGO_LDFLAGS: -L${{ github.workspace }}/ffmpeg/lib
+      PKG_CONFIG_PATH: ${{ github.workspace }}/ffmpeg/lib/pkgconfig
+      PKG_CONFIG: pkg-config --static
 
     steps:
       - uses: actions/checkout@v7
@@ -51,7 +55,7 @@ jobs:
             libgl1 libegl1 libwayland-client0 libwayland-cursor0 \
             libwayland-egl1 libx11-6 libxcursor1 libxrandr2 libxinerama1 libxi6 \
             libxkbcommon-dev libgl1-mesa-dev libopengl-dev libxcursor-dev libxrandr-dev \
-            libxinerama-dev libxi-dev libxft-dev
+            libxinerama-dev libxi-dev libxft-dev libxxf86vm-dev 
 
       - name: Cache FFmpeg build
         id: cache-ffmpeg
@@ -83,11 +87,6 @@ jobs:
           make install
 
       - name: Build
-        env:
-          CGO_CFLAGS: "-I${{ env.FFMPEG_PREFIX }}/include"
-          CGO_LDFLAGS: "-L${{ env.FFMPEG_PREFIX }}/lib"
-          PKG_CONFIG_PATH: "${{ env.FFMPEG_PREFIX }}/lib/pkgconfig"
-          PKG_CONFIG: "pkg-config --static"
         run: go build -o companion -ldflags "-linkmode external" ./cmd/companion
 
       - name: Build GUI (companion_gui)
