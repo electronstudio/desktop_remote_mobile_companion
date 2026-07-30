@@ -49,11 +49,12 @@ jobs:
             libdrm-dev \
             libva-dev \
             libgl1 libegl1 libwayland-client0 libwayland-cursor0 \
-            libwayland-egl1 libx11-6 libxcursor1 libxrandr2 libxinerama1 libxi6
+            libwayland-egl1 libx11-6 libxcursor1 libxrandr2 libxinerama1 libxi6 \
+            libxkbcommon-dev libgl1-mesa-dev libopengl-dev libxcursor-dev
 
       - name: Cache FFmpeg build
         id: cache-ffmpeg
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ${{ github.workspace }}/ffmpeg
           key: ffmpeg-${{ env.FFMPEG_VERSION }}-linux-ubuntu22.04-${{ hashFiles('.github/workflows/build.yml') }}
