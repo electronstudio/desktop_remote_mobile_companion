@@ -271,7 +271,7 @@ func Run(cli CLI) {
 	log.Printf(" certificate stored in %s", certDir)
 	log.Printf(" certificate SHA-256 fingerprint: %s", fingerprint)
 
-	for _, ip := range localIPs(true) {
+	for _, ip := range LocalIPs(true) {
 		s := fmt.Sprintf("https://%s:%d", ip, cli.Port)
 		log.Printf(" also reachable at %s", s)
 
@@ -343,7 +343,7 @@ func loadOrGenerateCert(certFile, keyFile string) (tls.Certificate, string, erro
 		IPAddresses:           []net.IP{net.ParseIP("127.0.0.1"), net.ParseIP("::1")},
 	}
 
-	for _, ip := range localIPs(false) {
+	for _, ip := range LocalIPs(false) {
 		parsed := net.ParseIP(ip)
 		if parsed != nil {
 			template.IPAddresses = append(template.IPAddresses, parsed)
@@ -429,7 +429,7 @@ func isWaylandSession() bool {
 	return false
 }
 
-func localIPs(add_brackets_ipv6 bool) []string {
+func LocalIPs(add_brackets_ipv6 bool) []string {
 	var out []string
 	ifaces, err := net.Interfaces()
 	if err != nil {

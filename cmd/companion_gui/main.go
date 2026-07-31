@@ -27,10 +27,11 @@ import (
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
+	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/widget"
-
 	"github.com/electronstudio/desktop_remote_mobile_companion/server"
+	go_qr "github.com/piglig/go-qr"
 )
 
 // maxLogLines caps how many log lines the text area retains so it does not
@@ -224,6 +225,9 @@ func main() {
 		widget.NewFormItem("Video FPS", videoFpsEntry),
 	)
 
+	qrContainer := container.NewVBox()
+	ipLabel := widget.NewLabelWithStyle("", fyne.TextAlignCenter, fyne.TextStyle{Bold: true})
+
 	start := widget.NewButton("Start", nil)
 	start.OnTapped = func() {
 		start.Disable()
@@ -237,14 +241,42 @@ func main() {
 		videoFpsEntry.Disable()
 		intelFastCheck.Disable()
 		dontGrabCheck.Disable()
+
+		ips := server.LocalIPs(true)
+		bestIp := ips[0]
+		for _, ip := range ips {
+			if strings.HasPrefix(ip, "192.168") {
+				bestIp = ip
+				break
+			}
+		}
+		s := fmt.Sprintf("https://%s:%d", bestIp, cli.Port)
+
+		ipLabel.SetText("Server address: " + s)
+
+		qr, err := go_qr.EncodeText(s, go_qr.Low)
+		if err != nil {
+			return
+		}
+
+		config := go_qr.NewQrCodeImgConfig(20, 4) // scale=10px, border=4 modules
+		i, err := qr.ToImage(config)
+		if err != nil {
+			return
+		}
+
+		qrCode := canvas.NewImageFromImage(i)
+		qrCode.FillMode = canvas.ImageFillOriginal
+		qrContainer.Add(qrCode)
+
 		// Run the server in the background so the window stays responsive.
 		// The server blocks forever (ListenAndServeTLS); it has no stop path,
 		// so closing the window exits the whole process (see SetOnClosed).
 		go server.Run(cli)
 	}
 
-	fix_permissions := widget.NewButton("Fix permissions", nil)
-	fix_permissions.OnTapped = func() {
+	fixPermissions := widget.NewButton("Fix permissions", nil)
+	fixPermissions.OnTapped = func() {
 		executable, err := os.Executable()
 		if err != nil {
 			fmt.Printf("Error determining executable path: %v\n", err)
@@ -256,7 +288,8 @@ func main() {
 		os.Exit(0)
 	}
 
-	top := container.NewVBox(form, intelFastCheck, dontGrabCheck, fix_permissions, start)
+	top := container.NewVBox(form, intelFastCheck, dontGrabCheck, fixPermissions, start, ipLabel, qrContainer)
+
 	w.SetContent(container.NewBorder(top, nil, nil, nil, logs.scroll))
 	w.Resize(fyne.NewSize(640, 480))
 

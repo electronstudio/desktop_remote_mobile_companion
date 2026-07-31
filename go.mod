@@ -11,6 +11,7 @@ require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/jbdemonte/virtual-device v1.2.1
 	github.com/mdp/qrterminal/v3 v3.2.1
+	github.com/piglig/go-qr v1.1.0
 	github.com/pion/webrtc/v4 v4.2.16
 	golang.org/x/sys v0.47.0
 	kernel.org/pub/linux/libs/security/libcap/cap v1.2.78
