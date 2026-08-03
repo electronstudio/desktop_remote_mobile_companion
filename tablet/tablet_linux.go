@@ -9,8 +9,9 @@
 // The device mimics a real pen tablet (like a Wacom Intuos or Surface Pen):
 // touching the surface is a pen-tip contact (the cursor follows and the
 // application draws, with live pressure and tilt forwarded from the
-// browser), and the client's L/M/R on-screen buttons act as the pen tip and
-// barrel buttons which the desktop maps to left / right / middle clicks. A
+// browser). The server also accepts buttondown/buttonup control messages
+// (pen tip / barrel buttons mapping to left / right / middle clicks), though
+// the bundled client no longer sends them. A
 // real pen keeps hovering between strokes; since a phone touchscreen has no
 // real hover, the server keeps the tool artificially in proximity between
 // strokes with a keep-alive ticker (see keepAlivePeriod) so the compositor
@@ -24,10 +25,12 @@ package tablet
 
 import (
 	"fmt"
+	"math"
 	"sync"
 	"time"
 
 	"github.com/electronstudio/desktop_remote_mobile_companion/input"
+	"github.com/electronstudio/desktop_remote_mobile_companion/video"
 	virtual_device "github.com/jbdemonte/virtual-device"
 	"github.com/jbdemonte/virtual-device/linux"
 	"kernel.org/pub/linux/libs/security/libcap/cap"
@@ -185,7 +188,7 @@ func (d *device) ProcessEvent(ev input.Event) error {
 		if len(ev.T) == 0 {
 			return nil
 		}
-		d.setPen(ev.T[0], ev.W, ev.H)
+		d.setPen(ev.T[0], ev.W, ev.H, video.CaptureWidth.Load(), video.CaptureHeight.Load())
 		d.beginStroke()
 	case "pointermove":
 		// Pen moved. While tipping, update axes with live pressure/tilt; while
@@ -194,7 +197,7 @@ func (d *device) ProcessEvent(ev input.Event) error {
 		if len(ev.T) == 0 {
 			return nil
 		}
-		d.setPen(ev.T[0], ev.W, ev.H)
+		d.setPen(ev.T[0], ev.W, ev.H, video.CaptureWidth.Load(), video.CaptureHeight.Load())
 		if !d.inRange {
 			d.proximityIn()
 			d.dropTip()
@@ -467,15 +470,20 @@ func (d *device) emitFrame(distance, press int32, btn linux.Button, btnVal int32
 // setPen updates the cached pen state (position, pressure, tilt) from a
 // browser touch sample. x/y are raw panel CSS-pixel coordinates; w/h are the
 // panel size, so the normalisation to the tablet's absolute axis range
-// happens here on the server. Out-of-panel coordinates (a captured pointer
-// dragged off the panel) are clamped; an unknown panel size (w/h <= 0)
-// parks the pen at the axis centre. Absent pressure is treated as 0
-// (hover); absent tilt as 0 degrees. This keeps "not reported"
-// distinguishable from a real zero (see the input.Touch docs) at the
-// protocol boundary.
-func (d *device) setPen(t input.Touch, w, h float64) {
-	d.x = axisCoord(t.X, w)
-	d.y = axisCoord(t.Y, h)
+// happens here on the server. capW/capH are the desktop video's capture
+// resolution (0 = no active stream): the client renders the video with
+// object-fit: contain, so when its aspect ratio differs from the panel's the
+// image is letterboxed/pillarboxed with black bars; contentCoord remaps the
+// pen onto the visible image so it tracks the desktop. Out-of-panel
+// coordinates (a captured pointer dragged off the panel) are clamped; an
+// unknown panel size (w/h <= 0) parks the pen at the axis centre. Absent
+// pressure is treated as 0 (hover); absent tilt as 0 degrees. This keeps
+// "not reported" distinguishable from a real zero (see the input.Touch docs)
+// at the protocol boundary.
+func (d *device) setPen(t input.Touch, w, h float64, capW, capH int64) {
+	nx, ny := panelToContent(t.X, t.Y, w, h, float64(capW), float64(capH))
+	d.x = int32(nx * float64(axisMax))
+	d.y = int32(ny * float64(axisMax))
 	if t.Pressure != nil {
 		p := *t.Pressure
 		if p < 0 {
@@ -505,22 +513,61 @@ func (d *device) tipPressure() int32 {
 	return tipFloor
 }
 
-// axisCoord normalises a raw panel coordinate (CSS px, 0..size) onto the
-// tablet's absolute axis range [0, axisMax], clamping out-of-panel values.
-// A non-positive size (unknown panel dimensions) parks the axis at its
+// panelToContent maps a raw panel coordinate (CSS px) to the fraction
+// [0,1] of the desktop it points at, accounting for the black bars the
+// client adds with object-fit: contain when the desktop video's aspect ratio
+// (capW x capH) differs from the panel's (panelW x panelH). The video is
+// scaled by s = min(panelW/capW, panelH/capH) and centred, so the displayed
+// image occupies disp = cap*s on each axis, offset by off = (panel-disp)/2;
+// coordinates in the bars clamp to the desktop edge. Coordinates outside
+// the panel (a captured pointer dragged off it) clamp to the panel first.
+//
+// With no active video (capW/capH <= 0) the mapping is the identity v/panel
+// so the tablet still spans the whole desktop (--video-source=none). A
+// non-positive panel extent (unknown dimensions) parks that axis at its
 // centre rather than dividing by zero.
-func axisCoord(v, size float64) int32 {
+func panelToContent(x, y, panelW, panelH, capW, capH float64) (float64, float64) {
+	nx := normClamp(x, panelW)
+	ny := normClamp(y, panelH)
+	if capW <= 0 || capH <= 0 || panelW <= 0 || panelH <= 0 {
+		return nx, ny
+	}
+	scale := math.Min(panelW/capW, panelH/capH)
+	dispW := capW * scale
+	dispH := capH * scale
+	offX := (panelW - dispW) / 2
+	offY := (panelH - dispH) / 2
+	cx := clamp((x - offX) / dispW)
+	cy := clamp((y - offY) / dispH)
+	return cx, cy
+}
+
+// normClamp divides v by size and clamps the result to [0,1], clamping v to
+// the panel first so a captured pointer dragged off the panel pins to its
+// edge. A non-positive size (unknown panel dimensions) yields the neutral
+// centre 0.5.
+func normClamp(v, size float64) float64 {
 	if size <= 0 {
-		return axisMax / 2
+		return 0.5
 	}
-	n := v / size
-	if n < 0 {
-		n = 0
+	if v < 0 {
+		v = 0
 	}
-	if n > 1 {
-		n = 1
+	if v > size {
+		v = size
 	}
-	return int32(n * float64(axisMax))
+	return v / size
+}
+
+// clamp constrains v to [0,1].
+func clamp(v float64) float64 {
+	if v < 0 {
+		return 0
+	}
+	if v > 1 {
+		return 1
+	}
+	return v
 }
 
 func clampTilt(v *int) int32 {

@@ -165,7 +165,7 @@
       pointer-events: none;
     }
     .tablet-surface {
-      height: 85%;
+      height: 100%;
       width: 100%;
       display: flex;
       align-items: center;
@@ -199,34 +199,6 @@
     }
     #area-top.has-video .panel[data-panel="tablet"] .touch-label {
       display: none;
-    }
-    .tablet-buttons {
-      height: 15%;
-      width: 100%;
-      display: flex;
-      border-top: 2px solid #444;
-    }
-    .tablet-btn {
-      flex: 1;
-      background: #333;
-      color: #eee;
-      border: none;
-      border-right: 1px solid #555;
-      font: inherit;
-      font-size: 1rem;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      touch-action: none;
-      user-select: none;
-      -webkit-user-select: none;
-      -webkit-touch-callout: none;
-    }
-    .tablet-btn:last-child {
-      border-right: none;
-    }
-    .tablet-btn:active {
-      background: #555;
     }
     .log-panel {
       display: flex;
@@ -266,11 +238,6 @@
         <div class="tablet-surface">
           <div class="touch-label">Tablet</div>
         </div>
-        <div class="tablet-buttons">
-          <button class="tablet-btn" data-button="left">L</button>
-          <button class="tablet-btn" data-button="middle">M</button>
-          <button class="tablet-btn" data-button="right">R</button>
-        </div>
       </div>
       <div class="panel log-panel" data-panel="log">
         <div class="log-version">v{{VERSION}}</div>
@@ -294,11 +261,6 @@
       <div class="panel" data-panel="tablet">
         <div class="tablet-surface">
           <div class="touch-label">Tablet</div>
-        </div>
-        <div class="tablet-buttons">
-          <button class="tablet-btn" data-button="left">L</button>
-          <button class="tablet-btn" data-button="middle">M</button>
-          <button class="tablet-btn" data-button="right">R</button>
         </div>
       </div>
       <div class="panel log-panel" data-panel="log">

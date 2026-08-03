@@ -66,16 +66,6 @@
     }
   }
 
-  function sendButtonEvent(type, button) {
-    if (!conn.channel || conn.channel.readyState !== 'open') return;
-    const payload = { device: 'tablet', type, button };
-    try {
-      conn.channel.send(JSON.stringify(payload));
-    } catch (err) {
-      console.error('send button failed', err);
-    }
-  }
-
   // Tell the server whether the tablet panel is the active panel in any area.
   // When it is not, the server releases the virtual pen (proximity-out) so the
   // system mouse works again; when it is, the pen stays in proximity and the
@@ -342,35 +332,6 @@
     surface.addEventListener('touchcancel', e => e.preventDefault(), { passive: false });
   }
 
-  function attachButtonListeners(tabletPanel) {
-    const pressedButtons = new Set();
-    tabletPanel.querySelectorAll('.tablet-btn').forEach(btn => {
-      const buttonName = btn.dataset.button;
-
-      const down = e => {
-        e.preventDefault();
-        if (!pressedButtons.has(buttonName)) {
-          pressedButtons.add(buttonName);
-          sendButtonEvent('buttondown', buttonName);
-        }
-      };
-
-      const up = e => {
-        e.preventDefault();
-        if (pressedButtons.has(buttonName)) {
-          pressedButtons.delete(buttonName);
-          sendButtonEvent('buttonup', buttonName);
-        }
-      };
-
-      btn.addEventListener('pointerdown', down, { passive: false });
-      btn.addEventListener('pointerup', up, { passive: false });
-      btn.addEventListener('pointerleave', up, { passive: false });
-      btn.addEventListener('pointercancel', up, { passive: false });
-      btn.addEventListener('contextmenu', e => e.preventDefault());
-    });
-  }
-
   function initArea(areaEl) {
     const initialIndex = areaEl.id === 'area-bottom' ? 2 : 0;
     const state = {
@@ -430,7 +391,6 @@
 
     attachSurfaceListeners(areaObj, 'trackpad');
     attachSurfaceListeners(areaObj, 'tablet');
-    attachButtonListeners(panels.tablet);
 
     areaEl.addEventListener('contextmenu', e => e.preventDefault());
   }
@@ -655,7 +615,10 @@
     if (window.screen && window.screen.orientation && window.screen.orientation.angle != null) {
       return Math.abs(window.screen.orientation.angle) === 90;
     }
-    return false;
+    // Fallback when no orientation API is available (or reports a stale
+    // value during the rotation transition): compare the actual viewport
+    // dimensions. At resize-event time these are settled and reliable.
+    return window.innerWidth > window.innerHeight;
   }
 
   function applyPortraitHeights(topPx) {
@@ -671,7 +634,12 @@
   }
 
   function setLandscapeLayout() {
-    topArea.style.height = '100vh';
+    // Use innerHeight, not 100vh: on mobile browsers 100vh is the height
+    // with the URL bar hidden (the "large viewport"), and rotation forces
+    // the URL bar to reappear, so 100vh makes the area taller than the
+    // visible screen and the video (object-fit: contain) is centered in
+    // that oversize area, leaving a bigger black bar at the top.
+    topArea.style.height = window.innerHeight + 'px';
     bottomArea.style.display = 'none';
     splitter.style.display = 'none';
   }
@@ -690,11 +658,18 @@
   function updateLayout() {
     const landscape = isLandscape();
     const orientation = landscape ? 'landscape' : 'portrait';
-    if (lastOrientation === orientation) return;
+    const changed = lastOrientation !== orientation;
     lastOrientation = orientation;
     if (landscape) {
+      // Re-apply on every resize, not just on the orientation flip: the
+      // browser URL bar can show/hide after rotation, changing innerHeight
+      // without another orientation change.
       setLandscapeLayout();
-    } else {
+    } else if (changed || portraitTopHeight !== null) {
+      // Re-apply the portrait heights even when the orientation is
+      // unchanged: a resize (rotation settling, URL bar show/hide) can
+      // change innerHeight, and the inline pixel heights are computed
+      // from it, so they must be recomputed against the new viewport.
       setPortraitLayout();
     }
   }
@@ -738,6 +713,10 @@
   if (window.screen && window.screen.orientation && window.screen.orientation.addEventListener) {
     window.screen.orientation.addEventListener('change', updateLayout);
   }
+  // resize always fires after a rotation (even when orientationchange does
+  // not, or fires before the viewport dimensions have settled), so it is
+  // the reliable trigger for re-laying out the areas.
+  window.addEventListener('resize', updateLayout);
 
   updateLayout();
 })();

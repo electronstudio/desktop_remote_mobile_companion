@@ -3,12 +3,14 @@
 package tablet
 
 import (
+	"math"
 	"os"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/electronstudio/desktop_remote_mobile_companion/input"
+	"github.com/electronstudio/desktop_remote_mobile_companion/video"
 	virtual_device "github.com/jbdemonte/virtual-device"
 	"github.com/jbdemonte/virtual-device/linux"
 	"github.com/jbdemonte/virtual-device/sdl"
@@ -182,17 +184,27 @@ func hasRelease(frame []rec, btn linux.Button) bool {
 }
 
 // --- event builders ---
+//
+// The wire protocol sends raw panel CSS-pixel coordinates plus the panel
+// size (W/H). The builders take a normalised fraction for readability and
+// convert via a fixed 100x100 panel, so pdown(0.5, 0.5) still means "centre
+// of the panel".
+
+const testPanelSize = 100.0
 
 func pdown(x, y float64) input.Event {
-	return input.Event{Type: "pointerdown", T: []input.Touch{{ID: 1, X: x, Y: y}}}
+	return input.Event{Type: "pointerdown", W: testPanelSize, H: testPanelSize,
+		T: []input.Touch{{ID: 1, X: x * testPanelSize, Y: y * testPanelSize}}}
 }
 
 func pmove(x, y float64) input.Event {
-	return input.Event{Type: "pointermove", T: []input.Touch{{ID: 1, X: x, Y: y}}}
+	return input.Event{Type: "pointermove", W: testPanelSize, H: testPanelSize,
+		T: []input.Touch{{ID: 1, X: x * testPanelSize, Y: y * testPanelSize}}}
 }
 
 func pup() input.Event {
-	return input.Event{Type: "pointerup", T: []input.Touch{{ID: 1, X: 0.5, Y: 0.5}}}
+	return input.Event{Type: "pointerup", W: testPanelSize, H: testPanelSize,
+		T: []input.Touch{{ID: 1, X: 0.5 * testPanelSize, Y: 0.5 * testPanelSize}}}
 }
 
 func bdown(btn string) input.Event {
@@ -344,7 +356,8 @@ func TestMoveAfterLiftEmitsHover(t *testing.T) {
 
 	// A finger pointer reports synthetic pressure 0.5; hover must force 0.
 	xVal := 0.6
-	move := input.Event{Type: "pointermove", T: []input.Touch{{ID: 1, X: xVal, Y: 0.6, Pressure: pressure(0.5)}}}
+	move := pmove(xVal, 0.6)
+	move.T[0].Pressure = pressure(0.5)
 	if err := d.ProcessEvent(move); err != nil {
 		t.Fatal(err)
 	}
@@ -622,5 +635,123 @@ func TestUnknownEventTypeReturnsError(t *testing.T) {
 	err := d.ProcessEvent(input.Event{Type: "frobnicate"})
 	if err == nil {
 		t.Fatal("expected error for unknown event type")
+	}
+}
+
+// closeFrac reports whether got is within tol of want (both fractions).
+func closeFrac(got, want, tol float64) bool { return math.Abs(got-want) <= tol }
+
+// TestPanelToContentNoVideo verifies the identity mapping used when no video
+// stream is active (capture size 0): the raw panel coordinate normalised by
+// the panel size, so the tablet still spans the whole desktop with
+// --video-source=none.
+func TestPanelToContentNoVideo(t *testing.T) {
+	cases := []struct{ x, y float64 }{{0, 0}, {50, 50}, {100, 100}, {25, 75}}
+	for _, c := range cases {
+		nx, ny := panelToContent(c.x, c.y, 100, 100, 0, 0)
+		if !closeFrac(nx, c.x/100, 1e-9) || !closeFrac(ny, c.y/100, 1e-9) {
+			t.Errorf("panelToContent(%v,%v) no video = (%v,%v), want identity (%v,%v)",
+				c.x, c.y, nx, ny, c.x/100, c.y/100)
+		}
+	}
+}
+
+// TestPanelToContentLetterbox verifies a video wider than the panel gets
+// black bars top and bottom (object-fit: contain): x spans the full panel
+// while y is offset by the bar and scaled down, and touches in the bars
+// clamp to the desktop's top/bottom edge.
+func TestPanelToContentLetterbox(t *testing.T) {
+	// Panel 100x100, video 200x100 (2:1). scale = min(100/200, 100/100) = 0.5,
+	// disp = 100x50, offY = 25. Image occupies y in [25,75].
+	const tol = 1e-9
+	cases := []struct {
+		x, y         float64
+		wantX, wantY float64
+	}{
+		{0, 0, 0, 0},       // top-left corner: y in the top bar clamps to 0
+		{50, 25, 0.5, 0},   // top edge of the image
+		{50, 50, 0.5, 0.5}, // image centre
+		{50, 75, 0.5, 1},   // bottom edge of the image
+		{50, 100, 0.5, 1},  // bottom bar clamps to 1
+		{100, 50, 1, 0.5},  // right edge (x has no bars)
+	}
+	for _, c := range cases {
+		nx, ny := panelToContent(c.x, c.y, 100, 100, 200, 100)
+		if !closeFrac(nx, c.wantX, tol) || !closeFrac(ny, c.wantY, tol) {
+			t.Errorf("panelToContent(%v,%v) letterbox = (%v,%v), want (%v,%v)",
+				c.x, c.y, nx, ny, c.wantX, c.wantY)
+		}
+	}
+}
+
+// TestPanelToContentPillarbox verifies a video taller than the panel gets
+// black bars left and right: y spans the full panel while x is offset by the
+// bar and scaled down, and touches in the bars clamp to the desktop's
+// left/right edge.
+func TestPanelToContentPillarbox(t *testing.T) {
+	// Panel 100x100, video 100x200 (1:2). scale = 0.5, disp = 50x100,
+	// offX = 25. Image occupies x in [25,75].
+	const tol = 1e-9
+	cases := []struct {
+		x, y         float64
+		wantX, wantY float64
+	}{
+		{0, 50, 0, 0.5},   // left bar clamps to 0
+		{25, 50, 0, 0.5},  // left edge of the image
+		{50, 0, 0.5, 0},   // top edge (y has no bars)
+		{75, 100, 1, 1},   // right edge of the image
+		{100, 50, 1, 0.5}, // right bar clamps to 1
+	}
+	for _, c := range cases {
+		nx, ny := panelToContent(c.x, c.y, 100, 100, 100, 200)
+		if !closeFrac(nx, c.wantX, tol) || !closeFrac(ny, c.wantY, tol) {
+			t.Errorf("panelToContent(%v,%v) pillarbox = (%v,%v), want (%v,%v)",
+				c.x, c.y, nx, ny, c.wantX, c.wantY)
+		}
+	}
+}
+
+// TestPanelToContentOutOfPanel verifies a captured pointer dragged off the
+// panel clamps to the panel edge (and hence, with a matching-aspect video,
+// to the desktop edge) instead of wrapping or extrapolating.
+func TestPanelToContentOutOfPanel(t *testing.T) {
+	nx, ny := panelToContent(-20, 130, 100, 100, 100, 100)
+	if nx != 0 || ny != 1 {
+		t.Errorf("panelToContent(-20,130) = (%v,%v), want (0,1)", nx, ny)
+	}
+}
+
+// TestPanelToContentUnknownPanelSize verifies a non-positive panel extent
+// (client did not send W/H) parks the axis at the desktop centre rather than
+// dividing by zero.
+func TestPanelToContentUnknownPanelSize(t *testing.T) {
+	nx, ny := panelToContent(10, 10, 0, 0, 1920, 1080)
+	if nx != 0.5 || ny != 0.5 {
+		t.Errorf("panelToContent unknown size = (%v,%v), want (0.5,0.5)", nx, ny)
+	}
+}
+
+// TestSetPenUsesCaptureSize verifies setPen reads the live capture
+// resolution and remaps a touch in a letterbox bar onto the desktop edge.
+func TestSetPenUsesCaptureSize(t *testing.T) {
+	defer video.CaptureWidth.Store(0)
+	defer video.CaptureHeight.Store(0)
+	video.CaptureWidth.Store(200)
+	video.CaptureHeight.Store(100)
+
+	vd := &fakeVD{}
+	d := newTestDevice(vd, false)
+
+	// Touch the very top of a 100x100 panel: with a 2:1 video that is inside
+	// the top black bar, so the pen must clamp to desktop y=0.
+	if err := d.ProcessEvent(pdown(0.5, 0)); err != nil {
+		t.Fatal(err)
+	}
+	last := vd.frame(len(vd.syncs()) - 1)
+	if got := absVal(last, linux.ABS_Y); got != 0 {
+		t.Errorf("top-bar touch Y = %d, want 0 (clamped to desktop top)", got)
+	}
+	if got := absVal(last, linux.ABS_X); got != axisMax/2 {
+		t.Errorf("top-bar touch X = %d, want %d (panel centre)", got, axisMax/2)
 	}
 }
