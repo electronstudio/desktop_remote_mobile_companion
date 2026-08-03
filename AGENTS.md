@@ -202,8 +202,10 @@ The browser uses `PointerEvent` (instead of `TouchEvent`) because `pointermove` 
 {
   "device": "trackpad",
   "type": "pointermove",
+  "w": 412.5,
+  "h": 380.25,
   "t": [
-    {"id": 1, "x": 0.37, "y": 0.51}
+    {"id": 1, "x": 152.3, "y": 193.8}
   ]
 }
 ```
@@ -211,9 +213,10 @@ The browser uses `PointerEvent` (instead of `TouchEvent`) because `pointermove` 
 - `device`: one of `trackpad` or `tablet`. The server routes the event to the corresponding virtual input device. A client may send events for both devices, even interleaved.
 - `type`: one of `pointerdown`, `pointermove`, `pointerup`, `pointercancel`, `buttondown`, `buttonup`. The server maps pointer events to the same lifecycle as touch events. Button events are routed to the tablet device only.
 - `button`: required for `buttondown`/`buttonup`; one of `left`, `middle`, `right`.
+- `w`, `h`: the panel's CSS-pixel size at send time (`getBoundingClientRect().width/height`). Fractional on HiDPI screens/fractional layouts; omitted for button events.
 - `t`: array containing a single pointer sample (omitted for button events).
 - `id`: pointer identifier (`PointerEvent.pointerId`).
-- `x`, `y`: normalized to `[0,1]` relative to the top-half trackpad element.
+- `x`, `y`: RAW panel-relative CSS-pixel coordinates (`clientX - rect.left`, `clientY - rect.top`) — NOT normalized. They are fractional on HiDPI screens and may lie outside `[0,w]`/`[0,h]` when a captured pointer is dragged off the panel; the server normalizes against `w`/`h` and clamps.
 
 The WebRTC data channel is configured as ordered and reliable (`{ ordered: true }`) so events arrive in order and are not dropped under load.
 

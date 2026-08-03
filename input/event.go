@@ -11,7 +11,11 @@ package input
 // than value) types are used so "absent" is distinguishable from a real zero,
 // which matters for pressure: 0 means "pen hovering, no contact".
 type Touch struct {
-	ID       int      `json:"id"`
+	ID int `json:"id"`
+	// X and Y are RAW panel-relative CSS-pixel coordinates (NOT normalised).
+	// They are fractional on HiDPI screens and may lie outside [0,W]/[0,H]
+	// when a captured pointer is dragged off the panel; the device code
+	// normalises and clamps them against Event.W/Event.H.
 	X        float64  `json:"x"`
 	Y        float64  `json:"y"`
 	Pressure *float64 `json:"p,omitempty"`  // 0..1
@@ -21,22 +25,34 @@ type Touch struct {
 
 // Event is the JSON payload sent over the WebRTC data channel.
 type Event struct {
-	Device string  `json:"device"`
-	Type   string  `json:"type"`
-	Button string  `json:"button,omitempty"`
-	Active *bool   `json:"active,omitempty"` // control: tablet panel activation (type "activate")
-	T      []Touch `json:"t"`
+	Device string `json:"device"`
+	Type   string `json:"type"`
+	Button string `json:"button,omitempty"`
+	Active *bool  `json:"active,omitempty"` // control: tablet panel activation (type "activate")
+	// W and H are the client panel's CSS-pixel size at send time. They are
+	// fractional on HiDPI screens / fractional layouts. A zero (or negative)
+	// value means "unknown"; device code must fall back to a neutral
+	// coordinate rather than divide by it.
+	W float64 `json:"w,omitempty"`
+	H float64 `json:"h,omitempty"`
+	T []Touch `json:"t"`
 }
 
-// Norm maps a browser [0,1] coordinate to the library's [-1,1] range.
-func Norm(v float64) float32 {
-	if v < 0 {
-		v = 0
+// NormRaw maps a raw panel coordinate (CSS px, 0..size) to the library's
+// [-1,1] range, clamping out-of-panel values. A non-positive size (unknown
+// panel dimensions) yields the neutral centre 0.
+func NormRaw(v, size float64) float32 {
+	if size <= 0 {
+		return 0
 	}
-	if v > 1 {
-		v = 1
+	n := v / size
+	if n < 0 {
+		n = 0
 	}
-	return float32(2*v - 1)
+	if n > 1 {
+		n = 1
+	}
+	return float32(2*n - 1)
 }
 
 // DenormBi converts a [-1,1] value to an absolute axis range [min,max].

@@ -185,7 +185,7 @@ func (d *device) ProcessEvent(ev input.Event) error {
 		if len(ev.T) == 0 {
 			return nil
 		}
-		d.setPen(ev.T[0])
+		d.setPen(ev.T[0], ev.W, ev.H)
 		d.beginStroke()
 	case "pointermove":
 		// Pen moved. While tipping, update axes with live pressure/tilt; while
@@ -194,7 +194,7 @@ func (d *device) ProcessEvent(ev input.Event) error {
 		if len(ev.T) == 0 {
 			return nil
 		}
-		d.setPen(ev.T[0])
+		d.setPen(ev.T[0], ev.W, ev.H)
 		if !d.inRange {
 			d.proximityIn()
 			d.dropTip()
@@ -465,12 +465,17 @@ func (d *device) emitFrame(distance, press int32, btn linux.Button, btnVal int32
 }
 
 // setPen updates the cached pen state (position, pressure, tilt) from a
-// browser touch sample. Absent pressure is treated as 0 (hover); absent tilt
-// as 0 degrees. This keeps "not reported" distinguishable from a real zero
-// (see the input.Touch docs) at the protocol boundary.
-func (d *device) setPen(t input.Touch) {
-	d.x = int32(t.X * float64(axisMax))
-	d.y = int32(t.Y * float64(axisMax))
+// browser touch sample. x/y are raw panel CSS-pixel coordinates; w/h are the
+// panel size, so the normalisation to the tablet's absolute axis range
+// happens here on the server. Out-of-panel coordinates (a captured pointer
+// dragged off the panel) are clamped; an unknown panel size (w/h <= 0)
+// parks the pen at the axis centre. Absent pressure is treated as 0
+// (hover); absent tilt as 0 degrees. This keeps "not reported"
+// distinguishable from a real zero (see the input.Touch docs) at the
+// protocol boundary.
+func (d *device) setPen(t input.Touch, w, h float64) {
+	d.x = axisCoord(t.X, w)
+	d.y = axisCoord(t.Y, h)
 	if t.Pressure != nil {
 		p := *t.Pressure
 		if p < 0 {
@@ -498,6 +503,24 @@ func (d *device) tipPressure() int32 {
 		return d.pressure
 	}
 	return tipFloor
+}
+
+// axisCoord normalises a raw panel coordinate (CSS px, 0..size) onto the
+// tablet's absolute axis range [0, axisMax], clamping out-of-panel values.
+// A non-positive size (unknown panel dimensions) parks the axis at its
+// centre rather than dividing by zero.
+func axisCoord(v, size float64) int32 {
+	if size <= 0 {
+		return axisMax / 2
+	}
+	n := v / size
+	if n < 0 {
+		n = 0
+	}
+	if n > 1 {
+		n = 1
+	}
+	return int32(n * float64(axisMax))
 }
 
 func clampTilt(v *int) int32 {

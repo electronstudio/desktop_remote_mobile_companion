@@ -135,8 +135,8 @@ func (d *device) ProcessEvent(ev input.Event) error {
 					return err
 				}
 			}
-			slot.X = input.Norm(t.X)
-			slot.Y = input.Norm(t.Y)
+			slot.X = input.NormRaw(t.X, ev.W)
+			slot.Y = input.NormRaw(t.Y, ev.H)
 			if action == "down" || slot.Pressure == 0 {
 				slot.Pressure = 1
 			}

@@ -36,11 +36,17 @@
 
   function sendPointerSample(type, e, device, surface) {
     if (!conn.channel || conn.channel.readyState !== 'open') return;
+    // Send raw panel-relative CSS-pixel coordinates plus the panel size and
+    // let the server do any normalisation. Coordinates are NOT rounded:
+    // clientX/rect are fractional on HiDPI screens, and sub-pixel precision
+    // matters for the tablet's absolute positioning. Pointer capture means a
+    // drag outside the panel legitimately reports x/y outside [0,w]/[0,h];
+    // we send those as-is and the server clamps.
     const rect = surface.getBoundingClientRect();
     const sample = {
       id: e.pointerId,
-      x: (e.clientX - rect.left) / rect.width,
-      y: (e.clientY - rect.top) / rect.height
+      x: e.clientX - rect.left,
+      y: e.clientY - rect.top
     };
     // Pen/stylus attributes are only relevant for the tablet. The browser
     // exposes pressure (0..1), tiltX/tiltY (degrees, -90..90) on PointerEvent;
@@ -52,7 +58,7 @@
       if (e.tiltX !== undefined) sample.tx = e.tiltX;
       if (e.tiltY !== undefined) sample.ty = e.tiltY;
     }
-    const payload = { device, type, t: [sample] };
+    const payload = { device, type, w: rect.width, h: rect.height, t: [sample] };
     try {
       conn.channel.send(JSON.stringify(payload));
     } catch (err) {
