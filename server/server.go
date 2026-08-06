@@ -117,7 +117,7 @@ func Run(cli CLI) {
 
 	pad, err := trackpad.New()
 	if err != nil {
-		toast.Show("failed to register virtual trackpad", uinputInstructions, true)
+		_ = toast.Show("failed to register virtual trackpad", uinputInstructions, true)
 		color.Set(color.FgYellow)
 		log.Printf("failed to register virtual trackpad: %v\n\n%s", err, uinputInstructions)
 		color.Unset()
@@ -127,7 +127,7 @@ func Run(cli CLI) {
 
 	tabletDev, err := tablet.New(!cli.DontGrabMouse)
 	if err != nil {
-		toast.Show("failed to register virtual graphics tablet", uinputInstructions, true)
+		_ = toast.Show("failed to register virtual graphics tablet", uinputInstructions, true)
 		color.Set(color.FgYellow)
 		log.Printf("failed to register virtual graphics tablet: %v\n\n%s", err, uinputInstructions)
 		color.Unset()
@@ -202,7 +202,7 @@ func Run(cli CLI) {
 		if ok, err := hasCapSysAdmin(); err != nil {
 			log.Printf("warning: could not check CAP_SYS_ADMIN (%v); desktop video may fail", err)
 		} else if !ok {
-			toast.Show("error: desktop video streaming", videoMissingCapInstructions, false)
+			_ = toast.Show("error: missing permissions", videoMissingCapInstructions, false)
 			color.Set(color.FgRed)
 			log.Printf("error: desktop video streaming: the process lacks CAP_SYS_ADMIN, which kmsgrab needs to capture the framebuffer.")
 			// File capabilities (setcap) are the preferred fix, but they are
@@ -233,13 +233,15 @@ func Run(cli CLI) {
 		// right choice. Warn but proceed: the per-connection attempt will fail
 		// gracefully if VAAPI really is missing.
 		log.Printf("warning: --video-source=kmsgrab on an NVIDIA system: kmsgrab relies on VAAPI, which is usually unavailable on NVIDIA, so desktop video may fail. Consider --video-source x11grab.")
+		_ = toast.Show("warning: nvidia detected", "Probably won't work with kmsgrab/Wayland.  Use --video-source x11grab.", false)
 	}
 	if isWaylandSession() && cli.VideoSource == "x11grab" {
 		// x11grab talks to the X server (XWayland under a Wayland session), so
 		// it can only capture X11/XWayland content; native Wayland surfaces are
 		// invisible to it and may appear as a black screen. kmsgrab captures
 		// the DRM framebuffer directly and is the better choice on Wayland.
-		log.Printf("warning: --video-source=x11grab on a Wayland session: x11grab captures the X server (XWayland), so it will likely capture only X11 windows or a black screen rather than native Wayland surfaces. Consider --video-source kmsgrab.")
+		log.Printf("warning: --video-source x11grab on a Wayland session: x11grab captures the X server (XWayland), so it will likely capture only X11 windows or a black screen rather than native Wayland surfaces. Consider --video-source kmsgrab.")
+		_ = toast.Show("warning: x11grab on a Wayland session", "Use --video-source kmsgrab", false)
 	}
 
 	if videoEnabled {
@@ -255,7 +257,7 @@ func Run(cli CLI) {
 				log.Printf("  capture card: auto-detect")
 			}
 		}
-		log.Printf("  fps=%d qp=%d low-power=%d", cli.VideoFps, cli.VideoQP, cli.VideoIntelFast)
+		log.Printf("  fps=%d qp=%d low-power=%t", cli.VideoFps, cli.VideoQP, cli.VideoIntelFast)
 	} else if cli.VideoSource == "none" {
 		log.Printf("desktop video streaming disabled (--video-source=none)")
 	} else {

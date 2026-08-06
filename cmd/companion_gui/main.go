@@ -259,7 +259,7 @@ func main() {
 			return
 		}
 
-		config := go_qr.NewQrCodeImgConfig(20, 4) // scale=10px, border=4 modules
+		config := go_qr.NewQrCodeImgConfig(12, 4) // scale=10px, border=4 modules
 		i, err := qr.ToImage(config)
 		if err != nil {
 			return
@@ -291,7 +291,7 @@ func main() {
 	top := container.NewVBox(form, intelFastCheck, dontGrabCheck, fixPermissions, start, ipLabel, qrContainer)
 
 	w.SetContent(container.NewBorder(top, nil, nil, nil, logs.scroll))
-	w.Resize(fyne.NewSize(640, 480))
+	w.Resize(fyne.NewSize(640, 1024))
 
 	// Closing the window exits the process, killing the server goroutine.
 	w.SetOnClosed(func() { os.Exit(0) })
