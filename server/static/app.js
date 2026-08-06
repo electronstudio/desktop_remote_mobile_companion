@@ -333,7 +333,7 @@
   }
 
   function initArea(areaEl) {
-    const initialIndex = areaEl.id === 'area-bottom' ? 2 : 0;
+    const initialIndex = areaEl.id === 'area-bottom' ? 2 : 1;
     const state = {
       currentIndex: initialIndex,
       settling: false,
