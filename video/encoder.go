@@ -392,7 +392,7 @@ func (e *encoder) initEncoder() error {
 		}
 	case encNvenc:
 		// Constant-QP rate control, zero B-frames for WebRTC ordering.
-		if err := opts.Set("rc", "cqp", astiav.NewDictionaryFlags()); err != nil {
+		if err := opts.Set("rc", "constqp", astiav.NewDictionaryFlags()); err != nil {
 			return fmt.Errorf("video: set rc option: %w", err)
 		}
 		if err := opts.Set("qp", fmt.Sprintf("%d", e.cfg.QP), astiav.NewDictionaryFlags()); err != nil {
@@ -400,6 +400,18 @@ func (e *encoder) initEncoder() error {
 		}
 		if err := opts.Set("bf", "0", astiav.NewDictionaryFlags()); err != nil {
 			return fmt.Errorf("video: set bf option: %w", err)
+		}
+		// Low-latency tuning: ull tune + fastest preset + no encoder
+		// frame-delay buffering. These named constants require the new
+		// nvenc preset API (FFmpeg 7+).
+		if err := opts.Set("tune", "ull", astiav.NewDictionaryFlags()); err != nil {
+			return fmt.Errorf("video: set tune option: %w", err)
+		}
+		if err := opts.Set("preset", "p1", astiav.NewDictionaryFlags()); err != nil {
+			return fmt.Errorf("video: set preset option: %w", err)
+		}
+		if err := opts.Set("delay", "0", astiav.NewDictionaryFlags()); err != nil {
+			return fmt.Errorf("video: set delay option: %w", err)
 		}
 	case encLibx264:
 		// Ultrafast + zerolatency minimises encode latency and CPU; crf is
