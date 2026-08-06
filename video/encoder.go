@@ -365,6 +365,15 @@ func (e *encoder) initEncoder() error {
 	e.encodeCodecContext.SetTimeBase(astiav.NewRational(1, e.cfg.FrameRate))
 	e.encodeCodecContext.SetFramerate(astiav.NewRational(e.cfg.FrameRate, 1))
 
+	// Keyframe interval. H264 P-frames are deltas against the previous
+	// frame, so without periodic keyframes a single lost RTP packet freezes
+	// the video forever (and a mid-stream joiner can never start decoding).
+	// Set an explicit GOP of ~2s so the stream self-heals. This matters most
+	// for nvenc, whose default GOP is effectively unbounded (one keyframe at
+	// the very start, then P-frames forever); libvaapi already defaults its
+	// GOP to the framerate, but set it explicitly for consistency.
+	e.encodeCodecContext.SetGopSize(e.cfg.FrameRate * 2)
+
 	// Hardware encoders borrow the VAAPI/CUDA hardware frames context
 	// produced by the filter graph; the encoder derives its device from it.
 	// libx264 is pure software and needs no hardware context.
