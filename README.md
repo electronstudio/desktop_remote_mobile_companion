@@ -35,17 +35,17 @@ have lower latency.
 Inara mirrors the display using ffmpeg's kmsgrab, which _may_ (or may not) work better on Wayland (although doesn't
 work at all on Nvidia systems).
 
-Inara uses hardware accelerated VAAPI encoding.
+Inara uses hardware accelerated VAAPI/CUDA encoding.
 
 Inara is written in Go rather than Rust.
 
 
 ## Install
 
-Download from [releases](releases).  To install on Debian/Ubuntu:
+Download from [releases](https://github.com/electronstudio/desktop_remote_mobile_companion/releases).  To install on Debian/Ubuntu:
 
     cd ~/Downloads
-    sudo apt install ./desktop_remote_mobile_companion*.apk
+    sudo apt install ./desktop_remote_mobile_companion*.deb
 
 On Intel GPU systems the full Intel drivers are required, e.g. install them on Debian with:
 
@@ -73,11 +73,11 @@ To run with no GUI:
 ```
 
 The first time it runs, a self-signed certificate is created in your user cache
-directory (`$HOME/.cache/desktop_remote_mobile_companion` on Linux).  (Delete it to re-generate if
-you have any certificate problems.)
+directory (`$HOME/.cache/desktop_remote_mobile_companion` on Linux).  Delete it to re-generate if
+you have any certificate problems. (Also try using private browser tab.)
 
 Inara will print a URL and also a QR code for that URL, e.g. `https://192.168.1.150:8080`. 
-pen this URL on your mobile device.
+Open this URL on your mobile device.
 
 On first run you must accept the self-signed certificate on the device and refresh the page.
 
@@ -160,4 +160,3 @@ To capture video, Inara requires `sys_admin` permission.  Options for this:
 
 If you installed the Debian or Arch package, setcap will be done automatically.  If you downloaded the binary
 tarball, run `companion_gui` and press 'fix permissions' to run setcap.
-
