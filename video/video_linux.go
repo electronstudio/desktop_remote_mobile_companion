@@ -64,6 +64,17 @@ type kmsgrabStreamer struct {
 	decodePacket       *astiav.Packet
 	decodeFrame        *astiav.Frame
 	videoStream        *astiav.Stream
+
+	// deepColorFourcc and deepColorSwFmt describe a high bit-depth framebuffer
+	// (e.g. a 10-bit/HDR desktop scanned out as ABGR16161616) that the in-tree
+	// kmsgrab demuxer rejects with "Framebuffer pixel format ... is not a known
+	// supported format". They are zero when capturing a normal 8-bit desktop.
+	// When set, initKmsgrab retries the open claiming a supported 8-bit layout
+	// (bgr0) and the capture loop rewrites each frame's DRM descriptor + frames
+	// context to the matching deep-color format (deepColorFourcc /
+	// deepColorSwFmt) so the filter graph converts it to 8-bit for the encoder.
+	deepColorFourcc uint32
+	deepColorSwFmt  astiav.PixelFormat
 }
 
 // newStreamer is the platform-specific dispatch called by the cross-platform
@@ -133,6 +144,10 @@ func newKmsgrabStreamer(cfg Config) (*kmsgrabStreamer, error) {
 		s.enc.free()
 		return nil, err
 	}
+	// If the desktop is a deep-color (10-bit/HDR) framebuffer, tell the encoder
+	// so its filter graph inserts the down-conversion stage. initFilterGraph is
+	// lazy (runs on the first frame), so setting this now is always in time.
+	s.enc.setDeepColor(s.deepColorFourcc != 0)
 
 	CaptureWidth.Store(int64(s.decodeCodecContext.Width()))
 	CaptureHeight.Store(int64(s.decodeCodecContext.Height()))
@@ -224,12 +239,76 @@ func (s *kmsgrabStreamer) initKmsgrab() error {
 	}
 
 	if err := s.inputFormatContext.OpenInput("-", inputFormat, deviceDictionary); err != nil {
-		return fmt.Errorf("video: open kmsgrab %s: %w", s.cfg.CardPath, err)
+		// The in-tree kmsgrab demuxer only knows a fixed table of DRM formats
+		// and rejects anything else with "Framebuffer pixel format %x is not a
+		// known supported format". A desktop using 10-bit color / HDR is scanned
+		// out as a 16-bit-per-channel framebuffer (e.g. ABGR16161616), which is
+		// not in that table, so the open fails. Detect that specific case and
+		// retry claiming a supported 8-bit layout (bgr0, which matches the
+		// framebuffer's byte size); the capture loop then rewrites each frame to
+		// the real deep-color format so it can be converted down to 8-bit for the
+		// H264 encoder.
+		if !s.probeDeepColor() {
+			return fmt.Errorf("video: open kmsgrab %s: %w", s.cfg.CardPath, err)
+		}
+		if rerr := s.reopenKmsgrabDeepColor(inputFormat); rerr != nil {
+			return fmt.Errorf("video: open kmsgrab %s: %w (deep-color retry: %v)", s.cfg.CardPath, err, rerr)
+		}
+		log.Printf("video: 10-bit/HDR desktop detected (DRM format %#08x); capturing as %s and converting to 8-bit for the encoder",
+			s.deepColorFourcc, s.deepColorSwFmt)
 	}
 
 	if err := s.inputFormatContext.FindStreamInfo(nil); err != nil {
 		return fmt.Errorf("video: find stream info: %w", err)
 	}
+	return s.initKmsgrabDecoder()
+}
+
+// probeDeepColor reports whether the desktop's scanout framebuffer uses a high
+// bit-depth (deep-color) DRM format the in-tree kmsgrab demuxer does not know.
+// On success it records the fourcc and matching FFmpeg software pixel format on
+// the streamer and returns true.
+func (s *kmsgrabStreamer) probeDeepColor() bool {
+	fourcc := probePrimaryPlaneFormat(s.cfg.CardPath)
+	swFmt, ok := deepColorToPixFmt(fourcc)
+	if !ok {
+		return false
+	}
+	s.deepColorFourcc = fourcc
+	s.deepColorSwFmt = swFmt
+	return true
+}
+
+// reopenKmsgrabDeepColor re-opens the kmsgrab input claiming a supported 8-bit
+// format (bgr0) so the demuxer accepts a deep-color framebuffer. It frees the
+// failed input context and opens a fresh one with an explicit format option
+// that bypasses kmsgrab's format auto-detection.
+func (s *kmsgrabStreamer) reopenKmsgrabDeepColor(inputFormat *astiav.InputFormat) error {
+	if s.inputFormatContext != nil {
+		s.inputFormatContext.CloseInput()
+		s.inputFormatContext.Free()
+	}
+	s.inputFormatContext = astiav.AllocFormatContext()
+	if s.inputFormatContext == nil {
+		return errors.New("video: alloc input format context")
+	}
+	opts := astiav.NewDictionary()
+	defer opts.Free()
+	if err := opts.Set("device", s.cfg.CardPath, astiav.NewDictionaryFlags()); err != nil {
+		return err
+	}
+	// bgr0 is a supported 32-bit (8-bit/channel) format whose byte size matches
+	// the 8-byte deep-color pixel well enough for the header open; the real
+	// format is patched onto each frame in the capture loop.
+	if err := opts.Set("format", "bgr0", astiav.NewDictionaryFlags()); err != nil {
+		return err
+	}
+	return s.inputFormatContext.OpenInput("-", inputFormat, opts)
+}
+
+// initKmsgrabDecoder locates the video stream and opens the pass-through
+// decoder after the input has been opened (by either initKmsgrab path).
+func (s *kmsgrabStreamer) initKmsgrabDecoder() error {
 
 	for _, st := range s.inputFormatContext.Streams() {
 		if st.CodecParameters().MediaType() == astiav.MediaTypeVideo {
@@ -339,6 +418,13 @@ func (s *kmsgrabStreamer) captureLoop() {
 				}
 				log.Printf("video: receive frame error: %v", err)
 				break
+			}
+
+			// For a deep-color (10-bit/HDR) framebuffer we told kmsgrab the buffer
+			// was bgr0 so it would open; present each frame as the real deep-color
+			// format now so the filter graph converts it to 8-bit for the encoder.
+			if s.deepColorFourcc != 0 {
+				patchDRMFrameFormat(s.decodeFrame, s.deepColorFourcc, s.deepColorSwFmt)
 			}
 
 			if err := s.enc.initFilterGraph(s.decodeCodecContext, s.decodeFrame, s.videoStream); err != nil {

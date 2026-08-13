@@ -133,6 +133,14 @@ type encoder struct {
 	kind  sourceKind
 	label encoderLabel
 
+	// deepColor is set (via setDeepColor) when the capture source feeds a high
+	// bit-depth (10-bit/HDR, 16-bit-per-channel) framebuffer that we patched to
+	// a deep-color software pixel format. It makes filterGraphDesc insert a
+	// hwdownload/hwupload (or format) stage that converts the deep-color frame
+	// down to the 8-bit NV12 the H264 encoder requires. Only kmsgrab sources can
+	// be deep-color (x11grab reads 8-bit pixels from the X server).
+	deepColor bool
+
 	// hwDeviceContext is created up front for software sources that target a
 	// hardware encoder (x11grab + vaapi/nvenc) so the hwupload filter can
 	// derive frames. It is nil for kmsgrab (the decoder's hardware frames
@@ -194,6 +202,11 @@ func newEncoder(cfg Config, kind sourceKind) (*encoder, error) {
 	}
 	return e, nil
 }
+
+// setDeepColor marks this encoder as receiving a high bit-depth (10-bit/HDR)
+// capture source, so filterGraphDesc inserts a down-conversion stage. It must
+// be called before the first frame builds the filter graph.
+func (e *encoder) setDeepColor(on bool) { e.deepColor = on }
 
 // initFilterGraph builds the filter graph the first time a decoded frame is
 // available. The graph description depends on both the source (hardware vs
@@ -305,6 +318,24 @@ func (e *encoder) filterGraphDesc(srcWidth int) string {
 	}
 
 	switch {
+	case e.kind == sourceKmsgrab && e.deepColor && e.label == encVaapi:
+		// Deep-color (10-bit/HDR) framebuffer patched to a 16-bit-per-channel
+		// software format. VAAPI can import that directly, but only via hwupload
+		// from a software frame (hwmap cannot reinterpret the DRM_PRIME layer),
+		// so download then re-upload, then scale to 8-bit NV12 for the encoder.
+		if capped {
+			return fmt.Sprintf("hwdownload,hwupload=derive_device=vaapi,scale_vaapi=w=%d:format=nv12", e.cfg.MaxWidth)
+		}
+		return "hwdownload,hwupload=derive_device=vaapi,scale_vaapi=format=nv12"
+
+	case e.kind == sourceKmsgrab && e.deepColor && e.label == encLibx264:
+		// Download the deep-color frame to the CPU and convert to 8-bit NV12 for
+		// software encoding.
+		if capped {
+			return fmt.Sprintf("hwdownload,scale=w=%d:h=-2,format=nv12", e.cfg.MaxWidth)
+		}
+		return "hwdownload,format=nv12"
+
 	case e.kind == sourceKmsgrab && e.label == encVaapi:
 		if capped {
 			return fmt.Sprintf("hwmap=derive_device=vaapi,scale_vaapi=w=%d:format=nv12", e.cfg.MaxWidth)
