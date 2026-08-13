@@ -268,7 +268,7 @@ jobs:
         shell: msys2 {0}
         run: |
           echo "CGO_CFLAGS=-I$FFMPEG_PREFIX/include" >> $GITHUB_ENV
-          echo "CGO_LDFLAGS=-L$FFMPEG_PREFIX/lib -lntdll -lsetupapi" >> $GITHUB_ENV
+          echo "CGO_LDFLAGS=-L$FFMPEG_PREFIX/lib -static -static-libgcc -static-libstdc++ -lntdll -lsetupapi" >> $GITHUB_ENV
           echo "PKG_CONFIG_PATH=$FFMPEG_PREFIX/lib/pkgconfig" >> $GITHUB_ENV
           echo "PKG_CONFIG=pkg-config --static" >> $GITHUB_ENV
 
