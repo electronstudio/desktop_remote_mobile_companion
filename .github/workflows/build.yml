@@ -9,6 +9,8 @@ on:
 
 env:
   FFMPEG_VERSION: "8.1.2"
+  # x264 commit (stable branch), pinned for reproducible builds.
+  X264_REF: "31e19f92f00c7003fa115047ce50978bc98c3a0d"
 
 jobs:
   get-version:
@@ -30,7 +32,10 @@ jobs:
       FFMPEG_PREFIX: ${{ github.workspace }}/ffmpeg
       CGO_ENABLED: "1"
       CGO_CFLAGS: -I${{ github.workspace }}/ffmpeg/include
-      CGO_LDFLAGS: -L${{ github.workspace }}/ffmpeg/lib
+      # FFmpeg's libavcodec.pc does not list x264 in Requires.private, so add
+      # it (and its static deps) explicitly or the final link fails with
+      # undefined x264_* references.
+      CGO_LDFLAGS: -L${{ github.workspace }}/ffmpeg/lib -lx264 -lstdc++ -lm -lpthread -ldl
       PKG_CONFIG_PATH: ${{ github.workspace }}/ffmpeg/lib/pkgconfig
       PKG_CONFIG: pkg-config --static
 
@@ -64,6 +69,23 @@ jobs:
           path: ${{ github.workspace }}/ffmpeg
           key: ffmpeg-${{ env.FFMPEG_VERSION }}-linux-ubuntu22.04-${{ hashFiles('.github/workflows/build.yml') }}
 
+      - name: Build x264 from source
+        if: steps.cache-ffmpeg.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          curl -L -o /tmp/x264.tar.gz "https://code.videolan.org/videolan/x264/-/archive/${{ env.X264_REF }}/x264-${{ env.X264_REF }}.tar.gz"
+          tar -C /tmp -xzf /tmp/x264.tar.gz
+          cd "/tmp/x264-${{ env.X264_REF }}"
+          ./configure \
+            --prefix="${{ env.FFMPEG_PREFIX }}" \
+            --enable-static \
+            --disable-shared \
+            --disable-cli \
+            --disable-opencl \
+            --enable-pic
+          make -j"$(nproc)"
+          make install
+
       - name: Build FFmpeg from source
         if: steps.cache-ffmpeg.outputs.cache-hit != 'true'
         run: |
@@ -77,6 +99,7 @@ jobs:
             --disable-shared \
             --enable-gpl \
             --enable-version3 \
+            --enable-libx264 \
             --enable-libdrm \
             --enable-vaapi \
             --disable-doc \
@@ -193,31 +216,37 @@ jobs:
         run: |
           echo "FFMPEG_PREFIX=$(cygpath -u "$GITHUB_WORKSPACE")/ffmpeg" >> "$GITHUB_ENV"
           echo "FFMPEG_TARBALL=$(cygpath -u "$GITHUB_WORKSPACE")/ffmpeg-${FFMPEG_VERSION}.tar.xz" >> "$GITHUB_ENV"
+          echo "X264_TARBALL=$(cygpath -u "$GITHUB_WORKSPACE")/x264-${X264_REF}.tar.gz" >> "$GITHUB_ENV"
 
       # Download outside MSYS2. curl inside the MSYS2/mingw environment
-      # intermittently fails the TLS handshake to ffmpeg.org's CDN with
+      # intermittently fails TLS handshakes with
       # "curl: (35) Recv failure: Connection reset by peer", while the
-      # native Windows curl (Schannel) / Invoke-WebRequest works reliably.
-      - name: Download FFmpeg source
+      # native Windows curl (Schannel) works reliably.
+      - name: Download FFmpeg and x264 sources
         if: steps.cache-ffmpeg.outputs.cache-hit != 'true'
         shell: pwsh
         run: |
-          $url = "https://ffmpeg.org/releases/ffmpeg-${env:FFMPEG_VERSION}.tar.xz"
-          $out = Join-Path $env:GITHUB_WORKSPACE "ffmpeg-${env:FFMPEG_VERSION}.tar.xz"
-          $ok = $false
-          for ($i = 1; $i -le 5; $i++) {
-            Write-Host "Attempt $i downloading $url"
-            try {
-              & curl.exe -L --fail --retry 3 --retry-all-errors --retry-delay 3 `
-                --connect-timeout 30 -o $out $url
-              if ($LASTEXITCODE -eq 0 -and (Test-Path $out)) { $ok = $true; break }
-            } catch {
-              Write-Host "Exception: $_"
+          function Fetch([string]$url, [string]$out) {
+            for ($i = 1; $i -le 5; $i++) {
+              Write-Host "Attempt $i downloading $url"
+              try {
+                & curl.exe -L --fail --retry 3 --retry-all-errors --retry-delay 3 `
+                  --connect-timeout 30 -o $out $url
+                if ($LASTEXITCODE -eq 0 -and (Test-Path $out)) {
+                  Write-Host "Downloaded $((Get-Item $out).Length) bytes to $out"
+                  return
+                }
+              } catch {
+                Write-Host "Exception: $_"
+              }
+              Start-Sleep -Seconds 5
             }
-            Start-Sleep -Seconds 5
+            throw "Failed to download $url after 5 attempts"
           }
-          if (-not $ok) { throw "Failed to download FFmpeg source after 5 attempts" }
-          Write-Host "Downloaded $((Get-Item $out).Length) bytes to $out"
+          Fetch "https://ffmpeg.org/releases/ffmpeg-${env:FFMPEG_VERSION}.tar.xz" `
+                (Join-Path $env:GITHUB_WORKSPACE "ffmpeg-${env:FFMPEG_VERSION}.tar.xz")
+          Fetch "https://code.videolan.org/videolan/x264/-/archive/${env:X264_REF}/x264-${env:X264_REF}.tar.gz" `
+                (Join-Path $env:GITHUB_WORKSPACE "x264-${env:X264_REF}.tar.gz")
 
       - name: Build FFmpeg from source
         if: steps.cache-ffmpeg.outputs.cache-hit != 'true'
@@ -225,6 +254,23 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p /tmp
+          export PKG_CONFIG_PATH="${FFMPEG_PREFIX}/lib/pkgconfig"
+
+          # Static-only x264, installed into the same prefix as FFmpeg so
+          # FFmpeg's configure finds it via pkg-config and it is statically
+          # linked into the final binaries.
+          tar -C /tmp -xzf "${X264_TARBALL}"
+          cd "/tmp/x264-${X264_REF}"
+          ./configure \
+            --prefix="${FFMPEG_PREFIX}" \
+            --enable-static \
+            --disable-shared \
+            --disable-cli \
+            --disable-opencl \
+            --enable-pic
+          make -j"$(nproc)"
+          make install
+
           tar -C /tmp -xJf "${FFMPEG_TARBALL}"
           cd "/tmp/ffmpeg-${FFMPEG_VERSION}"
 
@@ -253,6 +299,7 @@ jobs:
             --disable-shared \
             --enable-gpl \
             --enable-version3 \
+            --enable-libx264 \
             --disable-doc \
             --disable-programs \
             --disable-ffplay \
@@ -268,7 +315,7 @@ jobs:
         shell: msys2 {0}
         run: |
           echo "CGO_CFLAGS=-I$FFMPEG_PREFIX/include" >> $GITHUB_ENV
-          echo "CGO_LDFLAGS=-L$FFMPEG_PREFIX/lib -static -static-libgcc -static-libstdc++ -lntdll -lsetupapi" >> $GITHUB_ENV
+          echo "CGO_LDFLAGS=-L$FFMPEG_PREFIX/lib -static -static-libgcc -static-libstdc++ -lntdll -lsetupapi -lx264" >> $GITHUB_ENV
           echo "PKG_CONFIG_PATH=$FFMPEG_PREFIX/lib/pkgconfig" >> $GITHUB_ENV
           echo "PKG_CONFIG=pkg-config --static" >> $GITHUB_ENV
 
@@ -280,7 +327,7 @@ jobs:
           which pkg-config
           pkg-config --version
           ls -la "$FFMPEG_PREFIX/lib/pkgconfig/" || true
-          pkg-config --list-all | grep -i '^libav' || true
+          pkg-config --list-all | grep -iE '^(libav|x264)' || true
           pkg-config --cflags libavcodec || true
 
       - name: Build
