@@ -52,7 +52,7 @@ github.com/electronstudio/desktop_remote_mobile_companion
 - `video/video_linux.go` — Linux kmsgrab capture backend (DRM framebuffer) feeding a Pion H264 WebRTC track.
 - `video/video_x11grab_linux.go` — Linux x11grab capture backend (X server).
 - `video/encoder.go` — shared H264 encoder + filter-graph helper (the orthogonal "encoder axis": h264_vaapi / h264_nvenc / libx264), used by all capture backends.
-- `video/video_windows.go` — Windows ddagrab capture backend (placeholder pending implementation).
+- `video/video_windows.go` — Windows ddagrab capture backend (Direct3D 11 Desktop Duplication via FFmpeg's lavfi input; mirrors the kmsgrab backend).
 - `server/static/index.html` — responsive touch UI with mode selector, embedded desktop `<video>` in the tablet panel, and version display.
 - `server/static/app.js` — browser WebRTC client, touch-event capture, mode switching, recv-only video transceiver + `ontrack` rendering with visibility gating.
 - `server/VERSION` — embedded version string, displayed by both server and client.
@@ -89,7 +89,7 @@ Command-line flags are handled by `github.com/alexflint/go-arg`.
 |---|---|---|
 | `-p`, `--port` | `8080` | HTTPS listen port |
 | `--video-source` | `kmsgrab` | Desktop video capture source: `kmsgrab` (DRM framebuffer), `x11grab` (X server), or `none` to disable video. On Windows the source is always `ddagrab` regardless of this flag |
-| `--video-encoder` | `auto` | Video H264 encoder: `vaapi`, `nvenc`, `libx264`, or `auto` (auto = nvenc on NVIDIA, else vaapi, else libx264). `libx264` is only used when manually specified or as a last-resort fallback |
+| `--video-encoder` | `auto` | Video H264 encoder: `vaapi`, `nvenc`, `libx264`, or `auto` (Linux auto = nvenc on NVIDIA, else vaapi, else libx264; Windows auto = `libx264`). On Windows `amf` and `mf` are also accepted. `libx264` is only used when manually specified or as a last-resort fallback |
 | `--video-card` | (auto) | DRM card to capture (e.g. `/dev/dri/card1`); empty auto-detects the first `/dev/dri/card*` (kmsgrab only) |
 | `--video-fps` | `30` | Video capture frame rate |
 | `--video-qp` | `24` | Encoder quality (h264_vaapi/h264_nvenc QP, or libx264 CRF; lower is higher quality) |
@@ -242,17 +242,23 @@ ffmpeg -device /dev/dri/card0 -f kmsgrab -i - \
     -c:v h264_vaapi -qp 24 -bf 0 -
 ```
 
-The `x11grab` source reads pixels from the X server (no `CAP_SYS_ADMIN` needed) and pairs with any encoder (libx264 software, or h264_vaapi/h264_nvenc via `hwupload`). The source owns the input + decode pipeline (`video_linux.go` / `video_x11grab_linux.go`); the shared `encoder.go` owns the filter graph + H264 encoder, chosen from the source's frame type (hardware vs software) and the requested encoder family. The auto encoder default is h264_nvenc on NVIDIA systems (except kmsgrab, which cannot feed nvenc), else h264_vaapi if available, else libx264.
+The `x11grab` source reads pixels from the X server (no `CAP_SYS_ADMIN` needed) and pairs with any encoder (libx264 software, or h264_vaapi/h264_nvenc via `hwupload`). On Windows the source is always `ddagrab`, which captures the primary display through Direct3D 11 Desktop Duplication and produces D3D11 hardware frames; it pairs with `h264_nvenc` (via `hwmap=derive_device=cuda`), `h264_amf` (via `scale_d3d11=format=nv12`), `h264_mf` (download to software; the MFT converts and uploads), or `libx264` (software). The source owns the input + decode pipeline (`video_linux.go` / `video_x11grab_linux.go` / `video_windows.go`); the shared `encoder.go` owns the filter graph + H264 encoder, chosen from the source's frame type (hardware vs software) and the requested encoder family. The auto encoder default is h264_nvenc on NVIDIA Linux systems (except kmsgrab, which cannot feed nvenc), else h264_vaapi if available, else libx264; on Windows auto is always libx264 (no GPU vendor detection — see `docs/TODO.md`).
+
+Windows encoders:
+- `h264_nvenc` needs the NVIDIA driver (frames cross D3D11 -> CUDA via `hwmap`).
+- `h264_amf` needs a discrete AMD GPU reachable from ddagrab's D3D11 device; it uses `scale_d3d11=format=nv12`, which fails on WARP / feature-level-9 drivers.
+- `h264_mf` uses the Media Foundation transform that Windows picks for the primary adapter (typically Intel Quick Sync); because it cannot consume D3D11 frames directly and `scale_d3d11` is unreliable on such devices, the pipeline downloads to software (`hwdownload,format=bgra,format=nv12`) and lets the MFT convert/upload internally — the same pattern as the widely used `ffmpeg -f lavfi -i "ddagrab,hwdownload,format=bgra" -c:v h264_mf`.
 
 Notes:
-- **Encoder availability.** h264_vaapi needs a VAAPI-capable GPU; h264_nvenc needs the NVIDIA driver; libx264 is pure software. The auto default falls back to libx264 only when no hardware encoder is available (or when manually specified).
+- **Encoder availability.** h264_vaapi needs a VAAPI-capable GPU; h264_nvenc needs the NVIDIA driver; h264_amf/h264_mf need the respective Windows GPU driver/MFT; libx264 is pure software. The auto default falls back to libx264 only when no hardware encoder is available (or when manually specified).
 - **kmsgrab requires `CAP_SYS_ADMIN`** (see below) and typically has no VAAPI on NVIDIA, so on NVIDIA systems the server warns and `x11grab` is the better source.
 - **x11grab on Wayland** only captures the X server (XWayland), so native Wayland surfaces may appear as a black screen; the server warns and `kmsgrab` is the better source on Wayland.
-- **Build needs** the FFmpeg/libdrm C dev packages (`libavcodec-dev libavfilter-dev libavformat-dev libavutil-dev libavdevice-dev libdrm-dev`), x11grab support in FFmpeg, and CGO.
+- **ddagrab captures the primary display only** (`output_idx=0`) and draws the desktop cursor into the frames (draw_mouse default).
+- **Build needs** the FFmpeg/libdrm C dev packages (`libavcodec-dev libavfilter-dev libavformat-dev libavutil-dev libavdevice-dev libdrm-dev`), x11grab support in FFmpeg, and CGO. On Windows ddagrab/mf/amf/nvenc and Direct3D 11 are in-tree/in-box — no extra packages.
 - **Graceful degradation.** If `video.New` fails (no encoder/source/driver), the server logs a warning, adds no video track, and trackpad/tablet keep working; the tablet panel shows its placeholder.
 - **Visibility gating.** The browser only attaches the track to a `<video>` while the tablet panel is the active panel in its area, so a hidden surface does no decode work.
-- **One client at a time.** The pipeline is created per peer connection; `kmsgrab` is exclusive, so only one phone receives video concurrently. A shared fan-out pipeline is future work (see `docs/improvements.md`).
-- The fixed 30 fps default, a Windows ddagrab backend, adaptive native framerate, and multi-client fan-out are tracked in `docs/improvements.md`.
+- **One client at a time.** The pipeline is created per peer connection; `kmsgrab` is exclusive, so only one phone receives video concurrently. A shared fan-out pipeline is future work (see `docs/TODO.md`).
+- The fixed 30 fps default, adaptive native framerate, Windows GPU-vendor-detection for `--video-encoder=auto`, multi-monitor ddagrab, and multi-client fan-out are tracked in `docs/TODO.md`.
 
 ## Dependencies
 

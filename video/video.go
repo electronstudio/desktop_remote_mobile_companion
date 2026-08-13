@@ -17,13 +17,16 @@ import (
 // goroutine. A value of 0 means no video stream is active (or its resolution
 // has not yet been detected).
 //
-// This is the capture (input) resolution — the size kmsgrab/x11grab read from
-// the desktop. The streamed (encoder output) resolution is the same unless
-// --video-width (Config.MaxWidth) caps it; that smaller size is only known
-// lazily on the first frame, so this global reports the capture size.
+// This is the capture (input) resolution — the size kmsgrab/x11grab/ddagrab
+// read from the desktop. The streamed (encoder output) resolution is the
+// same unless --video-width (Config.MaxWidth) caps it; that smaller size is
+// only known lazily on the first frame, so this global reports the capture
+// size.
 //
-// One client at a time is active (kmsgrab is exclusive), so a single global is
-// sufficient; see AGENTS.md "One client at a time".
+// One client at a time is active (kmsgrab is exclusive; a second ddagrab
+// streamer would also contend over the single D3D11 desktop duplication
+// session), so a single global is sufficient; see AGENTS.md "One client at
+// a time".
 var (
 	CaptureWidth  atomic.Int64
 	CaptureHeight atomic.Int64
@@ -40,24 +43,31 @@ type Config struct {
 	Source string
 
 	// Encoder selects the H264 encoder family. "" or "auto" (the default)
-	// resolves to h264_nvenc on NVIDIA systems (except kmsgrab, which cannot
-	// feed nvenc), else h264_vaapi if available, else libx264. The explicit
-	// values "vaapi", "nvenc", and "libx264" are also accepted.
+	// resolves on Linux to h264_nvenc on NVIDIA systems (except kmsgrab,
+	// which cannot feed nvenc), else h264_vaapi if available, else libx264;
+	// on Windows auto resolves to libx264 (no GPU vendor detection is done
+	// there; that is a documented possible future improvement). The explicit
+	// values "vaapi", "nvenc", and "libx264" are always accepted, plus
+	// "amf" and "mf" on Windows.
 	Encoder string
 
 	// CardPath is the DRM card to capture from (e.g. "/dev/dri/card1").
-	// Empty means auto-detect the first /dev/dri/card* device.
+	// Empty means auto-detect the first /dev/dri/card* device. Unused by the
+	// Windows ddagrab backend (ddagrab always captures the primary display).
 	CardPath string
 
 	// MaxWidth caps the output width; 0 means capture at native resolution.
+	// (Currently only plumbed through the Linux backends; ddagrab ignores it.)
 	MaxWidth int
 
 	// FrameRate is the capture/push frame rate in fps. 30 is a sensible
 	// default; using the desktop's native frame rate is future work.
 	FrameRate int
 
-	// QP is the h264_vaapi constant-quality quantization parameter (0-52,
-	// lower is higher quality). 24 is a good default.
+	// QP is the encoder quality setting (h264_vaapi/h264_nvenc QP and
+	// libx264 CRF: 0-52, lower is higher quality; h264_amf CQP QP; mapped
+	// to h264_mf's 0-100 quality property as 100-2*QP). 24 is a good
+	// default.
 	QP int
 
 	// LowPower selects h264_vaapi low-power mode (0 = off, 1 = on). On means

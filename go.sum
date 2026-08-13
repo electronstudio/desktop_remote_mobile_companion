@@ -12,6 +12,8 @@ github.com/anthonynsimon/bild v0.14.0 h1:IFRkmKdNdqmexXHfEU7rPlAmdUZ8BDZEGtGHDnG
 github.com/anthonynsimon/bild v0.14.0/go.mod h1:hcvEAyBjTW69qkKJTfpcDQ83sSZHxwOunsseDfeQhUs=
 github.com/asticode/go-astiav v0.41.0 h1:HZCQ71lPqRQHHIQ5cShrHEq9HtX0NiWIHm7FZ2Jk+x8=
 github.com/asticode/go-astiav v0.41.0/go.mod h1:GI0pHw6K2/pl/o8upCtT49P/q4KCwhv/8nGLlCsZLdA=
+github.com/asticode/go-astiav v0.41.1-0.20260812064801-5c71be877e3b h1:1Tfke03dB7WrjOLdafwfY794pSf02NpGKJyyat4uWVs=
+github.com/asticode/go-astiav v0.41.1-0.20260812064801-5c71be877e3b/go.mod h1:GI0pHw6K2/pl/o8upCtT49P/q4KCwhv/8nGLlCsZLdA=
 github.com/asticode/go-astikit v0.42.0 h1:pnir/2KLUSr0527Tv908iAH6EGYYrYta132vvjXsH5w=
 github.com/asticode/go-astikit v0.42.0/go.mod h1:h4ly7idim1tNhaVkdVBeXQZEE3L0xblP7fCWbgwipF0=
 github.com/clipperhouse/uax29/v2 v2.2.0 h1:ChwIKnQN3kcZteTXMgb1wztSgaU+ZemkgWdohwgs8tY=

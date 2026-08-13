@@ -43,11 +43,31 @@ func (k sourceKind) String() string {
 }
 
 // hardwareInput reports whether the source's decoded frames carry a hardware
-// frames context. kmsgrab produces DRM hardware frames; x11grab produces
-// software frames. (ddagrab will produce D3D11 hardware frames, but its
-// backend is not implemented yet.)
+// frames context. kmsgrab produces DRM hardware frames and ddagrab produces
+// D3D11 hardware frames; x11grab produces software frames.
 func (k sourceKind) hardwareInput() bool {
 	return k == sourceKmsgrab || k == sourceDdagrab
+}
+
+// isAMF/isMF classify per-vendor encoder strings into the families the shared
+// encoder logic (hardware frames context, filter graph, option blocks) works
+// with. The Windows build accepts "amf"/"h264_amf" and "mf"/"h264_mf"
+// spellings for the explicit flag values; the HEVC variants are recognised
+// for forward compatibility (WindowsEncoderLabels lists them).
+func isAMF(label string) bool {
+	switch label {
+	case "amf", "h264_amf", "hevc_amf":
+		return true
+	}
+	return false
+}
+
+func isMF(label string) bool {
+	switch label {
+	case "mf", "h264_mf", "hevc_mf":
+		return true
+	}
+	return false
 }
 
 // encoderLabel is the resolved H264 encoder family.
@@ -56,6 +76,8 @@ type encoderLabel string
 const (
 	encVaapi   encoderLabel = "vaapi"
 	encNvenc   encoderLabel = "nvenc"
+	encAMF     encoderLabel = "amf"
+	encMF      encoderLabel = "mf"
 	encLibx264 encoderLabel = "libx264"
 )
 
@@ -65,10 +87,20 @@ func (l encoderLabel) codecName() string {
 		return "h264_vaapi"
 	case encNvenc:
 		return "h264_nvenc"
+	case encAMF:
+		return "h264_amf"
+	case encMF:
+		return "h264_mf"
 	case encLibx264:
 		return "libx264"
 	}
 	return string(l)
+}
+
+// isHardwareLabel reports whether the encoder consumes hardware frames and
+// therefore borrows the filter graph's hardware frames context.
+func (l encoderLabel) isHardwareLabel() bool {
+	return l == encVaapi || l == encNvenc || l == encAMF || l == encMF
 }
 
 // NvidiaGPU reports whether an NVIDIA device is present. It is a best-effort
@@ -88,23 +120,43 @@ func encoderAvailable(label encoderLabel) bool {
 
 // resolveEncoder picks the encoder for the given source and config.
 //
-// Auto default: h264_nvenc on NVIDIA systems that have it (except kmsgrab,
-// whose DRM frames cannot be fed to nvenc without a fragile vaapi->cuda
-// transfer), else h264_vaapi if available, else libx264. An explicit
-// --video-encoder value is validated against the same availability rules.
+// Auto default on Linux: h264_nvenc on NVIDIA systems that have it (except
+// kmsgrab, whose DRM frames cannot be fed to nvenc without a fragile
+// vaapi->cuda transfer), else h264_vaapi if available, else libx264. With
+// ddagrab (Windows) auto always resolves to libx264: no GPU vendor detection
+// is done on Windows, so hardware encoding there is opt-in via
+// --video-encoder={nvenc,amf,mf}; detecting the GPU vendor automatically is
+// a documented possible future improvement. An explicit --video-encoder
+// value is validated against the availability rules for its source.
 func resolveEncoder(cfg Config, kind sourceKind) (encoderLabel, error) {
 	requested := cfg.Encoder
 	auto := requested == "" || requested == "auto"
+	// The Windows-only encoders consume D3D11 hardware frames, so they can
+	// only pair with ddagrab.
+	windowsOnly := isAMF(requested) || isMF(requested)
 
 	var label encoderLabel
 	switch {
 	case !auto:
-		switch encoderLabel(requested) {
-		case encVaapi, encNvenc, encLibx264:
-			label = encoderLabel(requested)
+		switch {
+		case requested == "vaapi":
+			label = encVaapi
+		case requested == "nvenc":
+			label = encNvenc
+		case isAMF(requested):
+			label = encAMF
+		case isMF(requested):
+			label = encMF
+		case requested == "libx264":
+			label = encLibx264
 		default:
+			if kind == sourceDdagrab {
+				return "", fmt.Errorf("video: unsupported encoder %q for ddagrab (want nvenc, amf, mf, libx264, auto, or empty)", requested)
+			}
 			return "", fmt.Errorf("video: unsupported encoder %q (want vaapi, nvenc, libx264, auto, or empty)", requested)
 		}
+	case kind == sourceDdagrab:
+		label = encLibx264
 	case NvidiaGPU() && encoderAvailable(encNvenc) && kind != sourceKmsgrab:
 		label = encNvenc
 	case encoderAvailable(encVaapi):
@@ -113,9 +165,12 @@ func resolveEncoder(cfg Config, kind sourceKind) (encoderLabel, error) {
 		label = encLibx264
 	}
 
-	// kmsgrab cannot feed nvenc.
+	// kmsgrab cannot feed nvenc; the Windows-only encoders require ddagrab.
 	if kind == sourceKmsgrab && label == encNvenc {
 		return "", errors.New("video: kmsgrab with nvenc is not supported; use --video-source x11grab")
+	}
+	if windowsOnly && kind != sourceDdagrab {
+		return "", fmt.Errorf("video: encoder %q is only available with ddagrab on Windows", requested)
 	}
 
 	if !encoderAvailable(label) {
@@ -135,8 +190,9 @@ type encoder struct {
 
 	// hwDeviceContext is created up front for software sources that target a
 	// hardware encoder (x11grab + vaapi/nvenc) so the hwupload filter can
-	// derive frames. It is nil for kmsgrab (the decoder's hardware frames
-	// context drives hwmap) and for libx264 (pure software).
+	// derive frames. It is nil for hardware sources (kmsgrab/ddagrab — the
+	// decoder's hardware frames context drives the filter graph) and for
+	// libx264 (pure software).
 	hwDeviceContext *astiav.HardwareDeviceContext
 
 	filterGraph       *astiav.FilterGraph
@@ -336,6 +392,44 @@ func (e *encoder) filterGraphDesc(srcWidth int) string {
 			return fmt.Sprintf("scale=%s,format=nv12,hwupload=derive_device=cuda", width())
 		}
 		return "format=nv12,hwupload=derive_device=cuda"
+
+	case e.kind == sourceDdagrab && e.label == encNvenc:
+		// ddagrab frames live on the D3D11 device; upload them to CUDA for
+		// nvenc via hwmap.
+		if capped {
+			return fmt.Sprintf("hwmap=derive_device=cuda,scale_cuda=w=%d:format=nv12", e.cfg.MaxWidth)
+		}
+		return "hwmap=derive_device=cuda,scale_cuda=format=nv12"
+
+	case e.kind == sourceDdagrab && e.label == encAMF:
+		// h264_amf consumes D3D11 frames natively; convert BGRA to NV12 on
+		// the GPU via the D3D11 video processor (--video-width scaling is
+		// Linux-only).
+		return "scale_d3d11=format=nv12"
+
+	case e.kind == sourceDdagrab && e.label == encMF:
+		// h264_mf does NOT understand D3D11 hardware frames (it only accepts
+		// software NV12/YUV420p; MF MFTs that take D3D11 surfaces always do
+		// so inside their own device-context types) and scale_d3d11 fails on
+		// many D3D11 devices (its RENDER_TARGET|VIDEO_ENCODER output texture
+		// is rejected with E_INVALIDARG by WARP/feature-level-9 drivers and
+		// some hybrid-GPU setups), so download to software BGRA (the frame's
+		// native sw format — this device does not implement NV12 download as
+		// a textured read, hence "Invalid output format nv12") and let the
+		// MFT convert to NV12 and upload internally. This mirrors the widely
+		// used
+		//  ffmpeg -f lavfi -i "ddagrab,hwdownload,format=bgra" -c:v h264_mf
+		// pipeline. An explicit software format=nv12 converts BGRA to NV12
+		// (h264_mf requires NV12 or YUV420P input).
+		return "hwdownload,format=bgra,format=nv12"
+
+	case e.kind == sourceDdagrab && e.label == encLibx264:
+		// Download the D3D11 frame to the CPU for software encoding. As for
+		// h264_mf above, download in the native BGRA and convert in software.
+		if capped {
+			return fmt.Sprintf("hwdownload,format=bgra,scale=w=%d:h=-2:format=yuv420p", e.cfg.MaxWidth)
+		}
+		return "hwdownload,format=bgra,format=yuv420p"
 	}
 
 	return ""
@@ -365,6 +459,13 @@ func (e *encoder) initEncoder() error {
 	e.encodeCodecContext.SetTimeBase(astiav.NewRational(1, e.cfg.FrameRate))
 	e.encodeCodecContext.SetFramerate(astiav.NewRational(e.cfg.FrameRate, 1))
 
+	// h264_mf: request low-latency mode (CODECAPI_AVLowLatencyMode) via the
+	// generic codec flag; FF_DISABLE_AUTODETECT keeps mfenc from probing
+	// unrelated output profiles slower.
+	if e.label == encMF {
+		e.encodeCodecContext.SetFlags(e.encodeCodecContext.Flags().Add(astiav.CodecContextFlagLowDelay))
+	}
+
 	// Keyframe interval. H264 P-frames are deltas against the previous
 	// frame, so without periodic keyframes a single lost RTP packet freezes
 	// the video forever (and a mid-stream joiner can never start decoding).
@@ -372,12 +473,16 @@ func (e *encoder) initEncoder() error {
 	// for nvenc, whose default GOP is effectively unbounded (one keyframe at
 	// the very start, then P-frames forever); libvaapi already defaults its
 	// GOP to the framerate, but set it explicitly for consistency.
+	//
+	// h264_mf is safe to include: mfenc.c maps any non-default gop_size
+	// onto CODECAPI_AVEncMPVGOPSize, which Media Foundation H264 MFTs
+	// support.
 	e.encodeCodecContext.SetGopSize(e.cfg.FrameRate * 2)
 
-	// Hardware encoders borrow the VAAPI/CUDA hardware frames context
+	// Hardware encoders borrow the VAAPI/CUDA/D3D11 hardware frames context
 	// produced by the filter graph; the encoder derives its device from it.
 	// libx264 is pure software and needs no hardware context.
-	if e.label == encVaapi || e.label == encNvenc {
+	if e.label.isHardwareLabel() {
 		e.encodeCodecContext.SetHardwareFramesContext(e.filteredFrame.HardwareFramesContext())
 	}
 
@@ -422,6 +527,45 @@ func (e *encoder) initEncoder() error {
 		if err := opts.Set("delay", "0", astiav.NewDictionaryFlags()); err != nil {
 			return fmt.Errorf("video: set delay option: %w", err)
 		}
+	case encAMF:
+		// Ultra-low-latency usage, constant QP (lower means higher quality),
+		// and no B-frames. repeat_headers inserts SPS/PPS into every
+		// keyframe so the browser can start decoding mid-stream; the default
+		// header_insertion_mode (gop) only inserts them on GOP boundaries,
+		// which matches our ~2s GOP and keeps the payload small.
+		if err := opts.Set("usage", "ultralowlatency", astiav.NewDictionaryFlags()); err != nil {
+			return fmt.Errorf("video: set usage option: %w", err)
+		}
+		if err := opts.Set("rc", "cqp", astiav.NewDictionaryFlags()); err != nil {
+			return fmt.Errorf("video: set rc option: %w", err)
+		}
+		if err := opts.Set("qp_i", fmt.Sprintf("%d", e.cfg.QP), astiav.NewDictionaryFlags()); err != nil {
+			return fmt.Errorf("video: set qp_i option: %w", err)
+		}
+		if err := opts.Set("qp_p", fmt.Sprintf("%d", e.cfg.QP), astiav.NewDictionaryFlags()); err != nil {
+			return fmt.Errorf("video: set qp_p option: %w", err)
+		}
+		if err := opts.Set("bf", "0", astiav.NewDictionaryFlags()); err != nil {
+			return fmt.Errorf("video: set bf option: %w", err)
+		}
+		if err := opts.Set("repeat_headers", "1", astiav.NewDictionaryFlags()); err != nil {
+			return fmt.Errorf("video: set repeat_headers option: %w", err)
+		}
+	case encMF:
+		// FFmpeg's Media Foundation wrapper has no "low_latency"/repeat-
+		// header options: low latency is requested via the generic
+		// AV_CODEC_FLAG_LOW_DELAY codec flag (set before Open above) and SPS/
+		// PPS are emitted by the MFT itself on keyframes (mfenc.c only puts
+		// them in extradata for the MP4-style muxers).
+		if err := opts.Set("rate_control", "u_vbr", astiav.NewDictionaryFlags()); err != nil {
+			return fmt.Errorf("video: set rate_control option: %w", err)
+		}
+		if err := opts.Set("quality", fmt.Sprintf("%d", clampInt(100-e.cfg.QP*2, 0, 100)), astiav.NewDictionaryFlags()); err != nil {
+			return fmt.Errorf("video: set quality option: %w", err)
+		}
+		if err := opts.Set("hw_encoding", "1", astiav.NewDictionaryFlags()); err != nil {
+			return fmt.Errorf("video: set hw_encoding option: %w", err)
+		}
 	case encLibx264:
 		// Ultrafast + zerolatency minimises encode latency and CPU; crf is
 		// quality (lower is better); baseline profile is WebRTC-friendly.
@@ -448,6 +592,19 @@ func (e *encoder) initEncoder() error {
 	log.Printf("video: %s encoder opened (%dx%d, timebase %s)",
 		e.label.codecName(), e.encodeCodecContext.Width(), e.encodeCodecContext.Height(), e.encodeCodecContext.TimeBase().String())
 	return nil
+}
+
+// clampInt clamps v to [lo, hi]. Used to map the QP-style quality setting
+// onto h264_mf's 0..100 quality property (a higher quality property means
+// higher quality, the opposite of QP).
+func clampInt(v, lo, hi int) int {
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
 }
 
 // free releases the filter graph, encoder, hardware device context and the

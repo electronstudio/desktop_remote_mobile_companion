@@ -20,6 +20,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -31,6 +32,7 @@ import (
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/widget"
 	"github.com/electronstudio/desktop_remote_mobile_companion/server"
+	"github.com/electronstudio/desktop_remote_mobile_companion/video"
 	go_qr "github.com/piglig/go-qr"
 )
 
@@ -166,8 +168,20 @@ func main() {
 		cli.VideoSource = s
 	})
 	videoSourceSelect.SetSelected(cli.VideoSource)
+	// On Windows the capture source is always ddagrab (there is no kmsgrab /
+	// x11grab), so the dropdown is disabled and forced to "none"-safe no-op
+	// semantics: the server ignores VideoSource there entirely. Display that
+	// with a ddagrab selection so the log line and this widget agree.
+	if runtime.GOOS == "windows" {
+		videoSourceSelect.Options = []string{"ddagrab"}
+		videoSourceSelect.SetSelected("ddagrab")
+		videoSourceSelect.Disable()
+	}
 
-	videoEncoderSelect := widget.NewSelect([]string{"vaapi", "nvenc", "libx264", "auto"}, func(s string) {
+	// The encoder choices are platform-specific (Windows adds the
+	// D3D11-capable amf/mf hardware encoders), so they come from the video
+	// package rather than being hard-coded here.
+	videoEncoderSelect := widget.NewSelect(video.EncoderLabels(), func(s string) {
 		cli.VideoEncoder = s
 	})
 	if cli.VideoEncoder == "" {
@@ -196,6 +210,10 @@ func main() {
 		}
 	})
 	videoCardSelect.SetSelected(videoCardAuto)
+	// ddagrab always captures the primary display and has no card to select.
+	if runtime.GOOS == "windows" {
+		videoCardSelect.Disable()
+	}
 
 	// Video FPS entry: like the port entry, invalid or non-positive input is
 	// silently ignored so a half-typed value cannot break the server start.
@@ -211,6 +229,10 @@ func main() {
 		cli.VideoIntelFast = on
 	})
 	intelFastCheck.SetChecked(cli.VideoIntelFast)
+	// low-power is a h264_vaapi-only option; it has no effect on Windows.
+	if runtime.GOOS == "windows" {
+		intelFastCheck.Disable()
+	}
 
 	dontGrabCheck := widget.NewCheck("Don't grab mouse", func(on bool) {
 		cli.DontGrabMouse = on

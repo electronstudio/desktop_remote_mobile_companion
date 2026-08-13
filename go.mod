@@ -5,7 +5,7 @@ go 1.26.0
 require (
 	fyne.io/fyne/v2 v2.8.0
 	github.com/alexflint/go-arg v1.6.1
-	github.com/asticode/go-astiav v0.41.0
+	github.com/asticode/go-astiav v0.41.1-0.20260812064801-5c71be877e3b
 	github.com/electronstudio/low_latency_dictation v0.6.2
 	github.com/fatih/color v1.19.0
 	github.com/gorilla/websocket v1.5.3

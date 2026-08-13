@@ -20,3 +20,15 @@ check what happens when certificate expires
 - Multi-client fan-out: a single shared capture pipeline distributing H264
   samples to N peer connections (kmsgrab is exclusive today, so only one phone
   at a time gets video?).
+- Windows GPU vendor detection so `--video-encoder=auto` on Windows can pick
+  the hardware encoder (h264_mf via Quick Sync / AMF / nvenc) instead of
+  defaulting to libx264. The ddagrab backend already supports all of them -
+  auto just cannot tell which GPU is present.
+
+- Multi-monitor for ddagrab: capture `output_idx` other than 0 (0 = the
+  primary display only, matching current behaviour).
+
+- h264_amf + ddagrab without `scale_d3d11` (AMF derives its own D3D11 device
+  context, but ddagrab's frames are on the shared D3D11 device; the
+  `scale_d3d11` video-processor filter fails on WARP / feature-level-9
+  drivers, so today h264_amf only works on discrete AMD setups).

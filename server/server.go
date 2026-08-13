@@ -19,6 +19,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -47,11 +48,11 @@ var upgrader = websocket.Upgrader{
 type CLI struct {
 	Port int `arg:"-p,--port" default:"8080" help:"HTTPS listen port"`
 
-	VideoSource    string `arg:"--video-source" default:"kmsgrab" help:"desktop video capture source: \"kmsgrab\" (DRM, default), \"x11grab\" (X server), or \"none\" to disable video"`
-	VideoEncoder   string `arg:"--video-encoder" default:"auto" help:"video H264 encoder: vaapi, nvenc, libx264, or auto (default: nvenc on NVIDIA, else vaapi, else libx264)"`
-	VideoCard      string `arg:"--video-card" default:"" help:"DRM card to capture (e.g. /dev/dri/card1); empty auto-detects"`
+	VideoSource    string `arg:"--video-source" default:"kmsgrab" help:"desktop video capture source: \"kmsgrab\" (DRM, default), \"x11grab\" (X server), or \"none\" to disable video; ignored on Windows, where the source is always ddagrab"`
+	VideoEncoder   string `arg:"--video-encoder" default:"auto" help:"video H264 encoder: vaapi, nvenc, libx264, auto (Linux default: nvenc on NVIDIA, else vaapi, else libx264), and on Windows also amf and mf (auto = libx264)"`
+	VideoCard      string `arg:"--video-card" default:"" help:"DRM card to capture (e.g. /dev/dri/card1); empty auto-detects; ignored on Windows (ddagrab captures the primary display)"`
 	VideoFps       int    `arg:"--video-fps" default:"30" help:"video capture frame rate"`
-	VideoQP        int    `arg:"--video-qp" default:"24" help:"encoder quality (h264_vaapi/nvenc QP or libx264 CRF; lower is higher quality)"`
+	VideoQP        int    `arg:"--video-qp" default:"24" help:"encoder quality (h264_vaapi/nvenc QP, h264_amf CQP QP, or libx264 CRF; lower is higher quality; mapped to h264_mf's 0-100 quality property)"`
 	VideoWidth     int    `arg:"--video-width" default:"0" help:"cap video output width; 0 native"`
 	VideoIntelFast bool   `arg:"--video-intel-fast" default:"false" help:"enable h264_vaapi low-power mode; ignored for other encoders"`
 	DontGrabMouse  bool   `arg:"--dont-grab-mouse" default:"false" help:"disable the tablet hover keep-alive (Mutter cooldown workaround); use on compositors without the cooldown (e.g. wlroots) so the mouse is not grabbed while idle"`
@@ -226,16 +227,16 @@ func Run(cli CLI) {
 		}
 	}
 
-	if video.NvidiaGPU() && cli.VideoSource == "kmsgrab" {
+	if runtime.GOOS != "windows" && video.NvidiaGPU() && cli.VideoSource == "kmsgrab" {
 		// kmsgrab decodes DRM frames and feeds them to VAAPI via hwmap. NVIDIA
 		// systems typically have no VAAPI, so the kmsgrab pipeline usually
-		// cannot capture there; x11grab (or a future nvenc/ddagrab path) is the
-		// right choice. Warn but proceed: the per-connection attempt will fail
-		// gracefully if VAAPI really is missing.
+		// cannot capture there; x11grab (or, on Windows, nvenc with ddagrab) is
+		// the right choice. Warn but proceed: the per-connection attempt will
+		// fail gracefully if VAAPI really is missing.
 		log.Printf("warning: --video-source=kmsgrab on an NVIDIA system: kmsgrab relies on VAAPI, which is usually unavailable on NVIDIA, so desktop video may fail. Consider --video-source x11grab.")
 		_ = toast.Show("warning: nvidia detected", "Probably won't work with kmsgrab/Wayland.  Use --video-source x11grab.", false)
 	}
-	if isWaylandSession() && cli.VideoSource == "x11grab" {
+	if runtime.GOOS != "windows" && isWaylandSession() && cli.VideoSource == "x11grab" {
 		// x11grab talks to the X server (XWayland under a Wayland session), so
 		// it can only capture X11/XWayland content; native Wayland surfaces are
 		// invisible to it and may appear as a black screen. kmsgrab captures
@@ -249,7 +250,13 @@ func Run(cli CLI) {
 		if enc == "" {
 			enc = "auto"
 		}
-		log.Printf("desktop video streaming enabled (source=%s, encoder=%s)", cli.VideoSource, enc)
+		source := cli.VideoSource
+		if runtime.GOOS == "windows" {
+			// The source flag is ignored on Windows; log the actual backend so
+			// the log doesn't claim kmsgrab (the tag default) is in use.
+			source = "ddagrab"
+		}
+		log.Printf("desktop video streaming enabled (source=%s, encoder=%s)", source, enc)
 		if cli.VideoSource == "kmsgrab" {
 			if cli.VideoCard != "" {
 				log.Printf("  capture card: %s", cli.VideoCard)
