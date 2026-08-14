@@ -9,11 +9,12 @@ import "fmt"
 // libx264 software encoder and auto. Auto resolves to mf (see
 // resolveEncoder); nvenc and amf are opt-in.
 func EncoderLabels() map[string]string {
-	var labels = make(map[string]string)
+	var labelMap = make(map[string]string)
 	for _, e := range encoderKinds {
 		if e.isWindows {
-			labels[e.label] = fmt.Sprint(e.label, " (", e.description, ")")
+			description := fmt.Sprint(e.label, " (", e.description, ")")
+			labelMap[description] = e.label
 		}
 	}
-	return labels
+	return labelMap
 }

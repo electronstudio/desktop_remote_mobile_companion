@@ -184,10 +184,14 @@ func main() {
 	// D3D11-capable amf/mf hardware encoders), so they come from the video
 	// package rather than being hard-coded here.
 	encoders := video.EncoderLabels()
-	labels := slices.Collect(maps.Values(encoders))
+	labels := slices.Collect(maps.Keys(encoders))
 	labels = append(labels, "auto")
 	videoEncoderSelect := widget.NewSelect(labels, func(s string) {
 		cli.VideoEncoder = encoders[s]
+		//log.Print("selected")
+		//log.Print(cli.VideoEncoder)
+		//log.Print(s)
+		//log.Print(encoders)
 	})
 	if cli.VideoEncoder == "" {
 		cli.VideoEncoder = "auto" // "" is accepted by the server but display the canonical name

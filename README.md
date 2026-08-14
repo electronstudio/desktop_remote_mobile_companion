@@ -8,7 +8,7 @@ Connect your mobile device wirelessly to your PC and use it as:
 |-----------------------|----------------|-----------|---------|-------|
 | Trackpad              | ✅             | ✅        | ❌      | ❌    |
 | Graphics tablet       | ✅             | ✅        | ❌      | ❌    |
-| Display mirror        | ✅ (Intel/AMD) | ✅        | ❌      | ❌    |
+| Display mirror        | ✅ (Intel/AMD) | ✅        | ✅      | ❌    |
 | ~~Camera~~            | ❌             | ❌        | ❌      | ❌    |
 | ~~Microphone~~        | ❌             | ❌        | ❌      | ❌    |
 | ~~Keyboard~~          | ❌             | ❌        | ❌      | ❌    |

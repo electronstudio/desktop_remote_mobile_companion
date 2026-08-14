@@ -9,11 +9,12 @@ import "fmt"
 // auto. The Windows-only encoders (amf/mf) are listed in
 // encoder_labels_windows.go instead.
 func EncoderLabels() map[string]string {
-	var labels = make(map[string]string)
+	var labelMap = make(map[string]string)
 	for _, e := range encoderKinds {
 		if e.isLinux {
-			labels[e.label] = fmt.Sprint(e.label, " (", e.description, ")")
+			description := fmt.Sprint(e.label, " (", e.description, ")")
+			labelMap[description] = e.label
 		}
 	}
-	return labels
+	return labelMap
 }

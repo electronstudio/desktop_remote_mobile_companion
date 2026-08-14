@@ -113,7 +113,7 @@ jobs:
         run: go build -o inara -ldflags "-s -w -linkmode external" ./cmd/inara
 
       - name: Build GUI (inara_gui)
-        run: go build -tags migrated_fynedo -o inara_gui -ldflags "-s -w -linkmode external" ./cmd/inara_gui
+        run: go build -tags migrated_fynedo -o inara_gui -ldflags "-H=windowsgui -s -w -linkmode external" ./cmd/inara_gui
 
       - name: Stage artifact
         run: |
