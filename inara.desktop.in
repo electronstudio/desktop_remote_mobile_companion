@@ -1,10 +1,10 @@
 [Desktop Entry]
 Type=Application
 Version=1.0
-Name=Desktop Remote Mobile Companion
-GenericName=Companion
+Name=Inara
+GenericName=Inara
 Comment=Desktop remote mobile companion
-Icon=companion
-Exec=@BINDIR@/companion_gui
+Icon=inara
+Exec=@BINDIR@/inara_gui
 Categories=Utility;
 StartupNotify=false

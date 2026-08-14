@@ -62,12 +62,12 @@ type CLI struct {
 
 // CLIDefaults returns a CLI populated with the go-arg `default:` struct-tag
 // values (no command-line parsing), so callers that bypass go-arg — e.g. the
-// companion_gui, which has no CLI flags — can still take their starting
+// inara_gui, which has no CLI flags — can still take their starting
 // configuration from the same defaults the CLI binary uses. It parses an
 // empty argument list, so every field gets exactly its tag default.
 func CLIDefaults() CLI {
 	var cli CLI
-	p, err := arg.NewParser(arg.Config{Program: "companion"}, &cli)
+	p, err := arg.NewParser(arg.Config{Program: "inara"}, &cli)
 	if err != nil {
 		panic(err) // only possible if the CLI struct tags are malformed
 	}
@@ -332,7 +332,7 @@ func certDirectory() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	dir := filepath.Join(cache, "desktop_remote_mobile_companion")
+	dir := filepath.Join(cache, "inara")
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return "", err
 	}
@@ -372,7 +372,7 @@ func loadOrGenerateCert(certFile, keyFile string) (tls.Certificate, string, erro
 	template := x509.Certificate{
 		SerialNumber: serial,
 		Subject: pkix.Name{
-			Organization: []string{"desktop_remote_mobile_companion"},
+			Organization: []string{"inara"},
 		},
 		NotBefore:             time.Now().Add(-time.Hour),
 		NotAfter:              time.Now().AddDate(1, 0, 0),

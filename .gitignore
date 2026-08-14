@@ -1,7 +1,7 @@
 # Built binaries at repo root only — anchored with / so they do not match
-# the cmd/companion and cmd/companion_gui source directories.
-/companion
-/companion_gui
+# the cmd/inara and cmd/inara_gui source directories.
+/inara
+/inara_gui
 *.exe
 
 # FFmpeg 8.1.2 built by the Makefile (source tree, objects, _install, tarball)

@@ -7,8 +7,8 @@ set -e
 # the Makefile. On filesystems that reject file capabilities (e.g. nosuid
 # mounts) setcap fails; do not fail the package installation in that case.
 if [ "$1" = "configure" ]; then
-    setcap cap_sys_admin,cap_dac_override,cap_setpcap=p /usr/bin/companion || true
-    setcap cap_sys_admin,cap_dac_override,cap_setpcap=p /usr/bin/companion_gui || true
+    setcap cap_sys_admin,cap_dac_override,cap_setpcap=p /usr/bin/inara || true
+    setcap cap_sys_admin,cap_dac_override,cap_setpcap=p /usr/bin/inara_gui || true
 fi
 
 exit 0

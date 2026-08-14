@@ -1,14 +1,14 @@
-# AGENTS.md — desktop_remote_mobile_companion
+# AGENTS.md — inara
 
 This file contains the context coding agents need to work on this project.
 
 # Version numbers
 
-Always increment the minor version number sored in VERISON file before doing a build, e.g. server/VERSION 0.3.7 becomes 0.3.8.
+Always increment the minor version number sored in VERSION file before doing a build, e.g. server/VERSION 0.3.7 becomes 0.3.8.
 
 # Packaging
 
-`.github/workflows/build.yml` builds Linux (x86_64) and Windows artifacts and also produces a Debian/Ubuntu `.deb` in the `build-linux` job: the package tree mirrors `make install` (`companion` + `companion_gui` in `/usr/bin`, desktop file, hicolor icon, LICENSE as copyright), `Depends:` is generated with `dpkg-shlibdeps` (FFmpeg is statically linked), and `packaging/deb/postinst` applies the `setcap cap_sys_admin,cap_dac_override,cap_setpcap=p` grant to both binaries at install time (as the Makefile does). The control-file/postinst templates live in `packaging/deb/`. The `.deb` is uploaded as its own artifact and also copied uncompressed into the combined "all" artifact by the `combine` job.
+`.github/workflows/build.yml` builds Linux (x86_64) and Windows artifacts and also produces a Debian/Ubuntu `.deb` in the `build-linux` job: the package tree mirrors `make install` (`inara` + `inara_gui` in `/usr/bin`, desktop file, hicolor icon, LICENSE as copyright), `Depends:` is generated with `dpkg-shlibdeps` (FFmpeg is statically linked), and `packaging/deb/postinst` applies the `setcap cap_sys_admin,cap_dac_override,cap_setpcap=p` grant to both binaries at install time (as the Makefile does). The control-file/postinst templates live in `packaging/deb/`. The `.deb` is uploaded as its own artifact and also copied uncompressed into the combined "all" artifact by the `combine` job.
 
 ## Project overview
 
@@ -38,8 +38,8 @@ github.com/electronstudio/desktop_remote_mobile_companion
                              +-----------------+
 ```
 
-- `cmd/companion/main.go` — the `companion` CLI binary entry point: parses command-line flags (via `go-arg`) and calls `server.Run`.
-- `cmd/companion_gui/main.go` — the `companion_gui` binary entry point: a Fyne GUI with a "Start" button that runs `server.Run` in a goroutine with default flags (no CLI parsing), plus a read-only scrollable log text area that mirrors everything written via the standard `log` package (any package) through a process-global `log.SetOutput(io.MultiWriter(os.Stderr, ...))` redirect; a bounded line buffer + `fyne.Do` flush goroutine keeps the widget updated thread-safely.
+- `cmd/inara/main.go` — the `inara` CLI binary entry point: parses command-line flags (via `go-arg`) and calls `server.Run`.
+- `cmd/inara_gui/main.go` — the `inara_gui` binary entry point: a Fyne GUI with a "Start" button that runs `server.Run` in a goroutine with default flags (no CLI parsing), plus a read-only scrollable log text area that mirrors everything written via the standard `log` package (any package) through a process-global `log.SetOutput(io.MultiWriter(os.Stderr, ...))` redirect; a bounded line buffer + `fyne.Do` flush goroutine keeps the widget updated thread-safely.
 - `server/server.go` — the shared server library: HTTPS server, self-signed certificate generation, static/index serving, virtual-device creation, and version injection, exposed as `server.Run(cli CLI)`. The `/signal` WebSocket handler upgrades the connection and delegates to a `signaling.Session`, so `server.go` no longer contains WebRTC or device-routing logic.
 - `server/platform_linux.go` — platform/capability helpers (`hasCapSysAdmin`, `onNoSuidMount`, `reExecWithSudo`, privilege dropping), moved into the `server` package.
 - `server/platform_windows.go` — Windows stubs of the platform helpers.
@@ -61,22 +61,22 @@ github.com/electronstudio/desktop_remote_mobile_companion
 
 ```bash
 # default port 8080
-go run ./cmd/companion
+go run ./cmd/inara
 
 # custom port
-go run ./cmd/companion --port 8443
+go run ./cmd/inara --port 8443
 # or
-go run ./cmd/companion -p 8443
+go run ./cmd/inara -p 8443
 
 # GUI (opens a Fyne window with a Start button; ignores CLI args)
-go run -tags migrated_fynedo ./cmd/companion_gui
+go run -tags migrated_fynedo ./cmd/inara_gui
 ```
 
 Build the binaries:
 
 ```bash
-go build -o companion ./cmd/companion
-go build -tags migrated_fynedo -o companion_gui ./cmd/companion_gui
+go build -o inara ./cmd/inara
+go build -tags migrated_fynedo -o inara_gui ./cmd/inara_gui
 ```
 
 The static HTML/JS assets are embedded into the binary using `//go:embed` (from the `server` package), so each compiled binary is self-contained. The GUI binary links Fyne (via GLFW), which needs the X11/Wayland/OpenGL client libraries at runtime (`libglvnd`, `mesa`, `libx11`, `libxcursor`, `libxrandr`, `libxinerama`, `libxi`, `wayland` on Arch; `libgl1`, `libegl1`, `libwayland-*`, `libx11`, `libxcursor1`, `libxrandr2`, `libxinerama1`, `libxi6` on Debian).
@@ -100,17 +100,17 @@ Command-line flags are handled by `github.com/alexflint/go-arg`.
 Example:
 
 ```bash
-./companion --port 8443
+./inara --port 8443
 ```
 
 ## TLS certificate
 
 The server needs HTTPS because browser WebRTC APIs require a secure context. A self-signed certificate is generated automatically on first run and reused afterwards.
 
-- Storage location: `os.UserCacheDir()/desktop_remote_mobile_companion/`
-  - Linux: `$HOME/.cache/desktop_remote_mobile_companion/`
-  - macOS: `$HOME/Library/Caches/desktop_remote_mobile_companion/`
-  - Windows: `%LocalAppData%\desktop_remote_mobile_companion\`
+- Storage location: `os.UserCacheDir()/inara/`
+  - Linux: `$HOME/.cache/inara/`
+  - macOS: `$HOME/Library/Caches/inara/`
+  - Windows: `%LocalAppData%\inara\`
 - Files: `server.crt`, `server.key`
 - The certificate includes `localhost`, `127.0.0.1`, `::1`, and all non-loopback local interface IPs in the SAN list.
 - The SHA-256 fingerprint is printed at startup so users can verify it on first visit.
@@ -144,7 +144,7 @@ At startup, when the source is `kmsgrab` (the default, i.e. not `--video-source=
 To grant the capability to the binary once (no need to run as root afterwards):
 
 ```bash
-sudo setcap cap_sys_admin+ep ./companion
+sudo setcap cap_sys_admin+ep ./inara
 ```
 
 `setcap` is stored as a file extended attribute, so it must be re-applied after every rebuild (the file is replaced). Alternatively run with `--video-source=none` to use only the trackpad/tablet. Running the binary as root also works but is not recommended.
@@ -172,7 +172,7 @@ The device sets the full absinfo (including resolution) **before** `UI_DEV_CREAT
 On kernels older than 4.16, `UI_ABS_SETUP` is unavailable and the resolution must be set at device-creation time via a udev hwdb entry instead:
 
 ```bash
-sudo tee /etc/udev/hwdb.d/60-desktop-remote-mobile-companion.hwdb > /dev/null << 'EOF'
+sudo tee /etc/udev/hwdb.d/60-desktop-remote-mobile-inara.hwdb > /dev/null << 'EOF'
 # Spoofed pen tablet (virtual uinput device)
 evdev:input:b0003v056Ap0301*
  EVDEV_ABS_00=::200
@@ -283,7 +283,7 @@ No JavaScript build step is used; `static/app.js` is served as-is.
 
 Manual test flow:
 
-1. `go run ./cmd/companion`
+1. `go run ./cmd/inara`
 2. Open the printed LAN URL in a phone browser.
 3. Accept the self-signed certificate.
 4. Verify the status area shows “Data channel open” and the version number.

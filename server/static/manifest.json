@@ -1,6 +1,6 @@
 {
-  "name": "Desktop Remote Mobile Companion",
-  "short_name": "Desktop Remote",
+  "name": "Inara Desktop Remote Mobile Companion",
+  "short_name": "Inara",
   "description": "Turn a mobile device into a multitouch trackpad and graphics tablet for a Linux desktop.",
   "start_url": "/",
   "scope": "/",

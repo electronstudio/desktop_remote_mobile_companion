@@ -14,7 +14,7 @@ Log out and log back in for the group change to take effect.`
 
 const videoMissingCapInstructions = `To enable desktop video capture, grant CAP_SYS_ADMIN to the binary once (no need to run as root afterwards):
 
-   sudo /sbin/setcap cap_sys_admin,cap_dac_override,cap_setpcap=p /path/to/companion
+   sudo /sbin/setcap cap_sys_admin,cap_dac_override,cap_setpcap=p /path/to/inara
 
 
 Alternatively, run
@@ -28,7 +28,7 @@ until you do one of the following:
 
   - Copy or move the binary to a filesystem that is NOT mounted nosuid
     (e.g. /usr/local/bin, /opt, or /tmp) and run setcap there:
-        sudo /sbin/setcap cap_sys_admin,cap_dac_override,cap_setpcap=p /path/to/companion
+        sudo /sbin/setcap cap_sys_admin,cap_dac_override,cap_setpcap=p /path/to/inara
   - Remount the current filesystem without nosuid (e.g. add 'suid' to its mount
     options in /etc/fstab or mount it with 'suid'), then re-run setcap.
   - Run the program as root (sudo), which has CAP_SYS_ADMIN in its bounding set

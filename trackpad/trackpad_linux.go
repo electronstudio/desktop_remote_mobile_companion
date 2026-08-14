@@ -56,7 +56,7 @@ func newDevice() (Device, error) {
 		WithVendor(0x1234).
 		WithProduct(0x5678).
 		WithVersion(0x0001).
-		WithName("Desktop Remote Mobile Companion Touchpad")
+		WithName("Inara Touchpad")
 
 	tp := touchpad.NewVirtualTouchpadFactory().
 		WithDevice(vd).

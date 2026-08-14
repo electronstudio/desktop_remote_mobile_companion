@@ -1,6 +1,6 @@
 # Code Review Recommendations
 
-This document contains concrete, maintainability-focused recommendations for the `desktop_remote_mobile_companion` codebase. The goal is to reduce bugs, simplify logic, and make the code easier to change without premature optimization.
+This document contains concrete, maintainability-focused recommendations for the `inara` codebase. The goal is to reduce bugs, simplify logic, and make the code easier to change without premature optimization.
 
 ---
 

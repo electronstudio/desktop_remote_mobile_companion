@@ -1,10 +1,10 @@
 package main
 
-// companion_gui is a Fyne front-end for the server. Build with the
+// inara_gui is a Fyne front-end for the server. Build with the
 // `migrated_fynedo` tag so Fyne does not log its threading-model migration
 // warning at startup:
 //
-//     go build -tags migrated_fynedo -o companion_gui ./cmd/companion_gui
+//     go build -tags migrated_fynedo -o inara_gui ./cmd/inara_gui
 //
 // This is safe because the server (started by the Start button) runs in its
 // own goroutine and never calls any Fyne API; all Fyne calls happen on the
@@ -135,7 +135,7 @@ func driDevices() []string {
 func main() {
 	// Default server configuration, taken from the go-arg `default:` struct
 	// tags on server.CLI so the GUI starts with the same configuration as
-	// `companion` with no arguments. The GUI ignores command-line flags; the
+	// `inara` with no arguments. The GUI ignores command-line flags; the
 	// widgets below edit this struct before the Start button passes it to
 	// server.Run.
 	cli := server.CLIDefaults()
@@ -145,7 +145,7 @@ func main() {
 	// API and for a stable per-user config/cache directory). The app must be
 	// created before any widget: creating/refreshing a widget looks up the
 	// current app and panics if none exists yet.
-	a := app.NewWithID("co.electronstudio.desktop_remote_mobile_companion.gui")
+	a := app.NewWithID("co.electronstudio.inara.gui")
 	w := a.NewWindow("Inara - Desktop Remote Mobile Companion")
 
 	// Mirror all standard log output (from any package) into the GUI text

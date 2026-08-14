@@ -1,5 +1,5 @@
 # Maintainer: Richard Smith <aur@electronstudio.co.uk>
-pkgname=desktop-remote-mobile-companion-git
+pkgname=inara-git
 pkgver=0  # placeholder, overwritten by pkgver()
 pkgrel=1
 pkgdesc="Connect your mobile device wirelessly to your PC and use it as trackpad, graphics tablet, etc"
@@ -22,8 +22,8 @@ pkgver() {
 build() {
   cd "$srcdir/desktop_remote_mobile_companion"
   export GOFLAGS=-buildvcs=false
-  go build -o companion ./cmd/companion
-  go build -tags migrated_fynedo -o companion_gui ./cmd/companion_gui
+  go build -o inara ./cmd/inara
+  go build -tags migrated_fynedo -o inara_gui ./cmd/inara_gui
 }
 
 package() {

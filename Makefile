@@ -32,7 +32,7 @@ FFMPEG_ENV := PKG_CONFIG_PATH=$(FFMPEG_PREFIX)/lib/pkgconfig PKG_CONFIG_FLAGS=--
 SOURCES := $(shell find . -name '*.go' -not -path './third_party/*') go.mod go.sum \
 	$(shell find server/static -type f) server/VERSION
 
-all: companion_gui companion
+all: inara_gui inara
 
 # $(FFMPEG_PC): download + build + install FFmpeg 8.1.2 into $(FFMPEG_PREFIX).
 # Skipped entirely once $(FFMPEG_PC) exists.
@@ -50,33 +50,33 @@ $(FFMPEG_PC):
 		$(MAKE) -j$$(nproc) && \
 		$(MAKE) install
 
-companion_gui: $(SOURCES) $(FFMPEG_PC)
-	$(FFMPEG_ENV) go build -tags migrated_fynedo -o companion_gui ./cmd/companion_gui
+inara_gui: $(SOURCES) $(FFMPEG_PC)
+	$(FFMPEG_ENV) go build -tags migrated_fynedo -o inara_gui ./cmd/inara_gui
 
-companion: $(SOURCES) $(FFMPEG_PC)
-	$(FFMPEG_ENV) go build -o companion ./cmd/companion
+inara: $(SOURCES) $(FFMPEG_PC)
+	$(FFMPEG_ENV) go build -o inara ./cmd/inara
 
 install: all
-	install -Dm755 companion $(DESTDIR)$(BINDIR)/companion
-	install -Dm755 companion_gui $(DESTDIR)$(BINDIR)/companion_gui
-	setcap cap_sys_admin,cap_dac_override,cap_setpcap=p $(DESTDIR)$(BINDIR)/companion
-	setcap cap_sys_admin,cap_dac_override,cap_setpcap=p  $(DESTDIR)$(BINDIR)/companion_gui
+	install -Dm755 inara $(DESTDIR)$(BINDIR)/inara
+	install -Dm755 inara_gui $(DESTDIR)$(BINDIR)/inara_gui
+	setcap cap_sys_admin,cap_dac_override,cap_setpcap=p $(DESTDIR)$(BINDIR)/inara
+	setcap cap_sys_admin,cap_dac_override,cap_setpcap=p  $(DESTDIR)$(BINDIR)/inara_gui
 	mkdir -p $(DESTDIR)$(APPDIR)
-	sed 's|@BINDIR@|$(BINDIR)|' companion.desktop.in > $(DESTDIR)$(APPDIR)/companion.desktop
-	install -Dm644 server/static/icon-512.png  $(DESTDIR)$(ICONDIR)/512x512/apps/companion.png
+	sed 's|@BINDIR@|$(BINDIR)|' inara.desktop.in > $(DESTDIR)$(APPDIR)/inara.desktop
+	install -Dm644 server/static/icon-512.png  $(DESTDIR)$(ICONDIR)/512x512/apps/inara.png
 	gtk-update-icon-cache -f $(DESTDIR)$(ICONDIR) 2>/dev/null || true
 	update-desktop-database $(DESTDIR)$(APPDIR) 2>/dev/null || true
 
 uninstall:
-	rm -f $(DESTDIR)$(BINDIR)/companion $(DESTDIR)$(BINDIR)/companion_gui $(DESTDIR)$(APPDIR)/companion.desktop
-	rm -f $(DESTDIR)$(ICONDIR)/512x512/apps/companion.png
+	rm -f $(DESTDIR)$(BINDIR)/inara $(DESTDIR)$(BINDIR)/inara_gui $(DESTDIR)$(APPDIR)/inara.desktop
+	rm -f $(DESTDIR)$(ICONDIR)/512x512/apps/inara.png
 	gtk-update-icon-cache -f $(DESTDIR)$(ICONDIR) 2>/dev/null || true
 	update-desktop-database $(DESTDIR)$(APPDIR) 2>/dev/null || true
 
 
 
 clean:
-	rm -f companion_gui companion
+	rm -f inara_gui inara
 
 distclean: clean
 	rm -rf $(FFMPEG_DIR) $(FFMPEG_TARBALL)

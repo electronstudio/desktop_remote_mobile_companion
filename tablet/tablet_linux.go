@@ -129,7 +129,7 @@ func newDevice(keepAlive bool) (Device, error) {
 		WithVendor(0x056a).  // Wacom Co., Ltd
 		WithProduct(0x0301). // One by Wacom (medium), CTL-671
 		WithVersion(0x0001).
-		WithName("Desktop Remote Mobile Companion Tablet").
+		WithName("Inara Tablet").
 		WithAbsAxes([]virtual_device.AbsAxis{
 			{Axis: linux.ABS_X, Min: 0, Value: 0, Max: axisMax, Resolution: resolution},
 			{Axis: linux.ABS_Y, Min: 0, Value: 0, Max: axisMax, Resolution: resolution},
