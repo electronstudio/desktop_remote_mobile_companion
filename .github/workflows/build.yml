@@ -335,13 +335,14 @@ jobs:
         run: |
           export PKG_CONFIG_PATH="$FFMPEG_PREFIX/lib/pkgconfig"
           go build -ldflags "-s -w -linkmode external" -o inara.exe ./cmd/inara
+          go build -tags migrated_fynedo -ldflags "-s -w -linkmode external" -o inara_gui.exe ./cmd/inara_gui
 
       - name: Stage artifact
         shell: msys2 {0}
         run: |
           name="inara-windows-x86_64-${{ needs.get-version.outputs.version }}"
           mkdir -p "dist/$name"
-          cp inara.exe "dist/$name/"/
+          cp inara.exe inara_gui.exe "dist/$name/"
           cp README.md LICENSE "dist/$name/"
 
       - name: Upload binary
