@@ -144,7 +144,7 @@ func main() {
 	// created before any widget: creating/refreshing a widget looks up the
 	// current app and panics if none exists yet.
 	a := app.NewWithID("co.electronstudio.desktop_remote_mobile_companion.gui")
-	w := a.NewWindow("Desktop Remote Mobile Companion")
+	w := a.NewWindow("Inara - Desktop Remote Mobile Companion")
 
 	// Mirror all standard log output (from any package) into the GUI text
 	// area while keeping it on the terminal too.
@@ -229,10 +229,6 @@ func main() {
 		cli.VideoIntelFast = on
 	})
 	intelFastCheck.SetChecked(cli.VideoIntelFast)
-	// low-power is a h264_vaapi-only option; it has no effect on Windows.
-	if runtime.GOOS == "windows" {
-		intelFastCheck.Disable()
-	}
 
 	dontGrabCheck := widget.NewCheck("Don't grab mouse", func(on bool) {
 		cli.DontGrabMouse = on
@@ -310,10 +306,18 @@ func main() {
 		os.Exit(0)
 	}
 
-	top := container.NewVBox(form, intelFastCheck, dontGrabCheck, fixPermissions, start, ipLabel, qrContainer)
+	// low-power is a h264_vaapi-only option; it has no effect on Windows.
+	if runtime.GOOS == "windows" {
+		intelFastCheck.Disable()
+		fixPermissions.Disable()
+		dontGrabCheck.Disable()
+	}
+
+	checks := container.NewHBox(intelFastCheck, dontGrabCheck)
+	top := container.NewVBox(form, checks, fixPermissions, start, ipLabel, qrContainer)
 
 	w.SetContent(container.NewBorder(top, nil, nil, nil, logs.scroll))
-	w.Resize(fyne.NewSize(640, 1024))
+	w.Resize(fyne.NewSize(400, 800))
 
 	// Closing the window exits the process, killing the server goroutine.
 	w.SetOnClosed(func() { os.Exit(0) })
