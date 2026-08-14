@@ -20,8 +20,10 @@
 // hwmap=derive_device=cuda,scale_cuda=format=nv12), h264_amf and h264_mf
 // (both take the D3D11 frames natively via scale_d3d11=format=nv12), or
 // libx264 (via hwdownload,format=nv12). On Windows the auto default is
-// libx264: no GPU vendor detection is done (that is a possible future
-// improvement).
+// h264_mf: the Media Foundation transform targets whatever encoder Windows
+// picks for the primary adapter (typically Intel Quick Sync), so no GPU
+// vendor detection is needed. Auto preferring nvenc/amf over mf is a
+// possible future improvement.
 //
 // Capture scope: the primary display (ddagrab output_idx=0) only; multi
 // monitor and display selection are not possible/future improvements. The

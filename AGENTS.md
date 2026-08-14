@@ -89,7 +89,7 @@ Command-line flags are handled by `github.com/alexflint/go-arg`.
 |---|---|---|
 | `-p`, `--port` | `8080` | HTTPS listen port |
 | `--video-source` | `kmsgrab` | Desktop video capture source: `kmsgrab` (DRM framebuffer), `x11grab` (X server), or `none` to disable video. On Windows the source is always `ddagrab` regardless of this flag |
-| `--video-encoder` | `auto` | Video H264 encoder: `vaapi`, `nvenc`, `libx264`, or `auto` (Linux auto = nvenc on NVIDIA, else vaapi, else libx264; Windows auto = `libx264`). On Windows `amf` and `mf` are also accepted. `libx264` is only used when manually specified or as a last-resort fallback |
+| `--video-encoder` | `auto` | Video H264 encoder: `vaapi`, `nvenc`, `libx264`, or `auto` (Linux auto = nvenc on NVIDIA, else vaapi, else libx264; Windows auto = `mf`). On Windows `amf` and `mf` are also accepted. `libx264` is only used when manually specified or as a last-resort fallback |
 | `--video-card` | (auto) | DRM card to capture (e.g. `/dev/dri/card1`); empty auto-detects the first `/dev/dri/card*` (kmsgrab only) |
 | `--video-fps` | `30` | Video capture frame rate |
 | `--video-qp` | `24` | Encoder quality (h264_vaapi/h264_nvenc QP, or libx264 CRF; lower is higher quality) |
@@ -242,7 +242,7 @@ ffmpeg -device /dev/dri/card0 -f kmsgrab -i - \
     -c:v h264_vaapi -qp 24 -bf 0 -
 ```
 
-The `x11grab` source reads pixels from the X server (no `CAP_SYS_ADMIN` needed) and pairs with any encoder (libx264 software, or h264_vaapi/h264_nvenc via `hwupload`). On Windows the source is always `ddagrab`, which captures the primary display through Direct3D 11 Desktop Duplication and produces D3D11 hardware frames; it pairs with `h264_nvenc` (via `hwmap=derive_device=cuda`), `h264_amf` (via `scale_d3d11=format=nv12`), `h264_mf` (download to software; the MFT converts and uploads), or `libx264` (software). The source owns the input + decode pipeline (`video_linux.go` / `video_x11grab_linux.go` / `video_windows.go`); the shared `encoder.go` owns the filter graph + H264 encoder, chosen from the source's frame type (hardware vs software) and the requested encoder family. The auto encoder default is h264_nvenc on NVIDIA Linux systems (except kmsgrab, which cannot feed nvenc), else h264_vaapi if available, else libx264; on Windows auto is always libx264 (no GPU vendor detection — see `docs/TODO.md`).
+The `x11grab` source reads pixels from the X server (no `CAP_SYS_ADMIN` needed) and pairs with any encoder (libx264 software, or h264_vaapi/h264_nvenc via `hwupload`). On Windows the source is always `ddagrab`, which captures the primary display through Direct3D 11 Desktop Duplication and produces D3D11 hardware frames; it pairs with `h264_nvenc` (via `hwmap=derive_device=cuda`), `h264_amf` (via `scale_d3d11=format=nv12`), `h264_mf` (download to software; the MFT converts and uploads), or `libx264` (software). The source owns the input + decode pipeline (`video_linux.go` / `video_x11grab_linux.go` / `video_windows.go`); the shared `encoder.go` owns the filter graph + H264 encoder, chosen from the source's frame type (hardware vs software) and the requested encoder family. The auto encoder default is h264_nvenc on NVIDIA Linux systems (except kmsgrab, which cannot feed nvenc), else h264_vaapi if available, else libx264; on Windows auto resolves to h264_mf (the Media Foundation transform Windows picks for the primary adapter, typically Intel Quick Sync — no GPU vendor detection needed; preferring nvenc/amf over mf is tracked in `docs/TODO.md`).
 
 Windows encoders:
 - `h264_nvenc` needs the NVIDIA driver (frames cross D3D11 -> CUDA via `hwmap`).
@@ -250,7 +250,7 @@ Windows encoders:
 - `h264_mf` uses the Media Foundation transform that Windows picks for the primary adapter (typically Intel Quick Sync); because it cannot consume D3D11 frames directly and `scale_d3d11` is unreliable on such devices, the pipeline downloads to software (`hwdownload,format=bgra,format=nv12`) and lets the MFT convert/upload internally — the same pattern as the widely used `ffmpeg -f lavfi -i "ddagrab,hwdownload,format=bgra" -c:v h264_mf`.
 
 Notes:
-- **Encoder availability.** h264_vaapi needs a VAAPI-capable GPU; h264_nvenc needs the NVIDIA driver; h264_amf/h264_mf need the respective Windows GPU driver/MFT; libx264 is pure software. The auto default falls back to libx264 only when no hardware encoder is available (or when manually specified).
+- **Encoder availability.** h264_vaapi needs a VAAPI-capable GPU; h264_nvenc needs the NVIDIA driver; h264_amf/h264_mf need the respective Windows GPU driver/MFT; libx264 is pure software. On Linux the auto default falls back to libx264 only when no hardware encoder is available (or when manually specified).
 - **kmsgrab requires `CAP_SYS_ADMIN`** (see below) and typically has no VAAPI on NVIDIA, so on NVIDIA systems the server warns and `x11grab` is the better source.
 - **x11grab on Wayland** only captures the X server (XWayland), so native Wayland surfaces may appear as a black screen; the server warns and `kmsgrab` is the better source on Wayland.
 - **ddagrab captures the primary display only** (`output_idx=0`) and draws the desktop cursor into the frames (draw_mouse default).

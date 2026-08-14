@@ -20,6 +20,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"time"
 
@@ -49,7 +50,7 @@ type CLI struct {
 	Port int `arg:"-p,--port" default:"8080" help:"HTTPS listen port"`
 
 	VideoSource    string `arg:"--video-source" default:"kmsgrab" help:"desktop video capture source: \"kmsgrab\" (DRM, default), \"x11grab\" (X server), or \"none\" to disable video; ignored on Windows, where the source is always ddagrab"`
-	VideoEncoder   string `arg:"--video-encoder" default:"auto" help:"video H264 encoder: vaapi, nvenc, libx264, auto (Linux default: nvenc on NVIDIA, else vaapi, else libx264), and on Windows also amf and mf (auto = libx264)"`
+	VideoEncoder   string `arg:"--video-encoder" default:"auto" help:"video H264 encoder (choices listed below)"`
 	VideoCard      string `arg:"--video-card" default:"" help:"DRM card to capture (e.g. /dev/dri/card1); empty auto-detects; ignored on Windows (ddagrab captures the primary display)"`
 	VideoFps       int    `arg:"--video-fps" default:"30" help:"video capture frame rate"`
 	VideoQP        int    `arg:"--video-qp" default:"24" help:"encoder quality (h264_vaapi/nvenc QP, h264_amf CQP QP, or libx264 CRF; lower is higher quality; mapped to h264_mf's 0-100 quality property)"`
@@ -74,6 +75,36 @@ func CLIDefaults() CLI {
 		panic(err) // an empty arg list can only fail on a malformed default tag
 	}
 	return cli
+}
+
+// Epilogue implements go-arg's Epilogued interface, so the parser appends
+// this text to the bottom of --help. The --video-encoder help text in the
+// struct tag above must stay short because struct tags are compile-time
+// constants and cannot vary by platform; here we are free to call
+// video.EncoderLabels(), which is build-tag-selected per platform and lists
+// exactly the encoders available where the binary is running.
+func (CLI) Epilogue() string {
+	labels := video.EncoderLabels()
+	keys := make([]string, 0, len(labels))
+	for k := range labels {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	var b strings.Builder
+	b.WriteString("--video-encoder choices on this platform:\n")
+	for _, k := range keys {
+		fmt.Fprintf(&b, "  %s\n", labels[k])
+	}
+	// auto is not part of EncoderLabels (it is not a concrete encoder); its
+	// resolution is platform-specific, which is safe to branch on here
+	// because this text is generated at runtime on the target platform.
+	if runtime.GOOS == "windows" {
+		b.WriteString("  auto (mf)")
+	} else {
+		b.WriteString("  auto (nvenc on NVIDIA, else vaapi, else libx264)")
+	}
+	return b.String()
 }
 
 // Compile-time checks that the concrete device interfaces satisfy the

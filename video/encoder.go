@@ -121,11 +121,13 @@ func encoderAvailable(e encoderKind) bool {
 // Auto default on Linux: h264_nvenc on NVIDIA systems that have it (except
 // kmsgrab, whose DRM frames cannot be fed to nvenc without a fragile
 // vaapi->cuda transfer), else h264_vaapi if available, else libx264. With
-// ddagrab (Windows) auto always resolves to libx264: no GPU vendor detection
-// is done on Windows, so hardware encoding there is opt-in via
-// --video-encoder={nvenc,amf,mf}; detecting the GPU vendor automatically is
-// a documented possible future improvement. An explicit --video-encoder
-// value is validated against the availability rules for its source.
+// ddagrab (Windows) auto resolves to h264_mf: the Media Foundation transform
+// targets whatever encoder Windows picks for the primary adapter (typically
+// Intel Quick Sync), so no GPU vendor detection is needed. The other Windows
+// hardware encoders (nvenc, amf) remain opt-in via --video-encoder; making
+// auto prefer them over mf is a documented possible future improvement. An
+// explicit --video-encoder value is validated against the availability rules
+// for its source.
 func resolveEncoder(cfg Config, source sourceKind) (encoderKind, error) {
 	requested := cfg.Encoder
 
