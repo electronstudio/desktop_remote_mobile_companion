@@ -18,9 +18,11 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"maps"
 	"os"
 	"os/exec"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -181,8 +183,11 @@ func main() {
 	// The encoder choices are platform-specific (Windows adds the
 	// D3D11-capable amf/mf hardware encoders), so they come from the video
 	// package rather than being hard-coded here.
-	videoEncoderSelect := widget.NewSelect(video.EncoderLabels(), func(s string) {
-		cli.VideoEncoder = s
+	encoders := video.EncoderLabels()
+	labels := slices.Collect(maps.Values(encoders))
+	labels = append(labels, "auto")
+	videoEncoderSelect := widget.NewSelect(labels, func(s string) {
+		cli.VideoEncoder = encoders[s]
 	})
 	if cli.VideoEncoder == "" {
 		cli.VideoEncoder = "auto" // "" is accepted by the server but display the canonical name

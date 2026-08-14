@@ -2,10 +2,18 @@
 
 package video
 
+import "fmt"
+
 // EncoderLabels lists the --video-encoder choices offered by the GUI on this
 // platform: the Linux hardware encoders plus the libx264 software encoder and
 // auto. The Windows-only encoders (amf/mf) are listed in
 // encoder_labels_windows.go instead.
-func EncoderLabels() []string {
-	return []string{"vaapi", "nvenc", "libx264", "auto"}
+func EncoderLabels() map[string]string {
+	var labels = make(map[string]string)
+	for _, e := range encoderKinds {
+		if e.isLinux {
+			labels[e.label] = fmt.Sprint(e.label, " (", e.description, ")")
+		}
+	}
+	return labels
 }

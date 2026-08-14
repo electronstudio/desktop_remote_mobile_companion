@@ -49,59 +49,57 @@ func (k sourceKind) hardwareInput() bool {
 	return k == sourceKmsgrab || k == sourceDdagrab
 }
 
-// isAMF/isMF classify per-vendor encoder strings into the families the shared
-// encoder logic (hardware frames context, filter graph, option blocks) works
-// with. The Windows build accepts "amf"/"h264_amf" and "mf"/"h264_mf"
-// spellings for the explicit flag values; the HEVC variants are recognised
-// for forward compatibility (WindowsEncoderLabels lists them).
-func isAMF(label string) bool {
-	switch label {
-	case "amf", "h264_amf", "hevc_amf":
-		return true
-	}
-	return false
+type encoderKind struct {
+	label       string
+	codec       string
+	isHardware  bool
+	isLinux     bool
+	isWindows   bool
+	description string
 }
 
-func isMF(label string) bool {
-	switch label {
-	case "mf", "h264_mf", "hevc_mf":
-		return true
+var (
+	encVaapi = encoderKind{
+		label:       "vaapi",
+		codec:       "h264_vaapi",
+		isHardware:  true,
+		isLinux:     true,
+		description: "hardware, AMD/Intel only",
 	}
-	return false
-}
-
-// encoderLabel is the resolved H264 encoder family.
-type encoderLabel string
-
-const (
-	encVaapi   encoderLabel = "vaapi"
-	encNvenc   encoderLabel = "nvenc"
-	encAMF     encoderLabel = "amf"
-	encMF      encoderLabel = "mf"
-	encLibx264 encoderLabel = "libx264"
+	encNvenc = encoderKind{
+		label:       "nvenc",
+		codec:       "h264_nvenc",
+		isHardware:  true,
+		isWindows:   true,
+		isLinux:     true,
+		description: "hardware, Nvidia only",
+	}
+	encAMF = encoderKind{
+		label:       "amf",
+		codec:       "h264_amf",
+		isHardware:  true,
+		isWindows:   true,
+		description: "hardware, AMD only",
+	}
+	encMF = encoderKind{
+		label:       "mf",
+		codec:       "h264_mf",
+		isHardware:  true,
+		isWindows:   true,
+		description: "hardware/software, any GPU",
+	}
+	encLibx264 = encoderKind{
+		label:       "libx264",
+		codec:       "libx264",
+		isHardware:  false,
+		isLinux:     true,
+		isWindows:   true,
+		description: "software",
+	}
+	encNone = encoderKind{}
 )
 
-func (l encoderLabel) codecName() string {
-	switch l {
-	case encVaapi:
-		return "h264_vaapi"
-	case encNvenc:
-		return "h264_nvenc"
-	case encAMF:
-		return "h264_amf"
-	case encMF:
-		return "h264_mf"
-	case encLibx264:
-		return "libx264"
-	}
-	return string(l)
-}
-
-// isHardwareLabel reports whether the encoder consumes hardware frames and
-// therefore borrows the filter graph's hardware frames context.
-func (l encoderLabel) isHardwareLabel() bool {
-	return l == encVaapi || l == encNvenc || l == encAMF || l == encMF
-}
+var encoderKinds = []encoderKind{encVaapi, encNvenc, encAMF, encMF, encLibx264}
 
 // NvidiaGPU reports whether an NVIDIA device is present. It is a best-effort
 // check for /dev/nvidia0, which exists on Linux systems with the NVIDIA
@@ -114,8 +112,8 @@ func NvidiaGPU() bool {
 	return false
 }
 
-func encoderAvailable(label encoderLabel) bool {
-	return astiav.FindEncoderByName(label.codecName()) != nil
+func encoderAvailable(e encoderKind) bool {
+	return astiav.FindEncoderByName(e.codec) != nil
 }
 
 // resolveEncoder picks the encoder for the given source and config.
@@ -128,55 +126,46 @@ func encoderAvailable(label encoderLabel) bool {
 // --video-encoder={nvenc,amf,mf}; detecting the GPU vendor automatically is
 // a documented possible future improvement. An explicit --video-encoder
 // value is validated against the availability rules for its source.
-func resolveEncoder(cfg Config, kind sourceKind) (encoderLabel, error) {
+func resolveEncoder(cfg Config, source sourceKind) (encoderKind, error) {
 	requested := cfg.Encoder
-	auto := requested == "" || requested == "auto"
-	// The Windows-only encoders consume D3D11 hardware frames, so they can
-	// only pair with ddagrab.
-	windowsOnly := isAMF(requested) || isMF(requested)
 
-	var label encoderLabel
-	switch {
-	case !auto:
+	//// The Windows-only encoders consume D3D11 hardware frames, so they can
+	//// only pair with ddagrab.
+	//windowsOnly := isAMF(requested) || isMF(requested)
+
+	var kind = encNone
+
+	if requested == "" || requested == "auto" {
 		switch {
-		case requested == "vaapi":
-			label = encVaapi
-		case requested == "nvenc":
-			label = encNvenc
-		case isAMF(requested):
-			label = encAMF
-		case isMF(requested):
-			label = encMF
-		case requested == "libx264":
-			label = encLibx264
+		case source == sourceDdagrab:
+			kind = encMF
+		case NvidiaGPU() && encoderAvailable(encNvenc) && source != sourceKmsgrab:
+			kind = encNvenc
+		case encoderAvailable(encVaapi):
+			kind = encVaapi
 		default:
-			if kind == sourceDdagrab {
-				return "", fmt.Errorf("video: unsupported encoder %q for ddagrab (want nvenc, amf, mf, libx264, auto, or empty)", requested)
-			}
-			return "", fmt.Errorf("video: unsupported encoder %q (want vaapi, nvenc, libx264, auto, or empty)", requested)
+			kind = encLibx264
 		}
-	case kind == sourceDdagrab:
-		label = encLibx264
-	case NvidiaGPU() && encoderAvailable(encNvenc) && kind != sourceKmsgrab:
-		label = encNvenc
-	case encoderAvailable(encVaapi):
-		label = encVaapi
-	default:
-		label = encLibx264
+	} else {
+		for _, e := range encoderKinds {
+			if e.label == requested {
+				kind = e
+			}
+		}
 	}
 
 	// kmsgrab cannot feed nvenc; the Windows-only encoders require ddagrab.
-	if kind == sourceKmsgrab && label == encNvenc {
-		return "", errors.New("video: kmsgrab with nvenc is not supported; use --video-source x11grab")
-	}
-	if windowsOnly && kind != sourceDdagrab {
-		return "", fmt.Errorf("video: encoder %q is only available with ddagrab on Windows", requested)
+	if source == sourceKmsgrab && kind == encNvenc {
+		return encoderKind{}, errors.New("video: kmsgrab with nvenc is not supported; use --video-source x11grab")
 	}
 
-	if !encoderAvailable(label) {
-		return "", fmt.Errorf("video: encoder %s (%s) not available in this ffmpeg build", label, label.codecName())
+	if kind == encNone {
+		return encNone, fmt.Errorf("video: unsupported encoder %q ", requested)
 	}
-	return label, nil
+	if !encoderAvailable(kind) {
+		return encNone, fmt.Errorf("video: encoder %s (%s) not available in this ffmpeg build", kind.label, kind.codec)
+	}
+	return kind, nil
 }
 
 // encoder owns the filter graph and H264 encoder shared across capture
@@ -184,9 +173,9 @@ func resolveEncoder(cfg Config, kind sourceKind) (encoderLabel, error) {
 // its capture loop: it feeds decoded frames into the filter graph and pulls
 // encoded H264 packets out.
 type encoder struct {
-	cfg   Config
-	kind  sourceKind
-	label encoderLabel
+	cfg    Config
+	source sourceKind
+	enc    encoderKind
 
 	// hwDeviceContext is created up front for software sources that target a
 	// hardware encoder (x11grab + vaapi/nvenc) so the hwupload filter can
@@ -210,25 +199,25 @@ type encoder struct {
 // are lazy (they need the first decoded/filtered frame, which carries the
 // hardware frames context they borrow).
 func newEncoder(cfg Config, kind sourceKind) (*encoder, error) {
-	label, err := resolveEncoder(cfg, kind)
+	enc, err := resolveEncoder(cfg, kind)
 	if err != nil {
 		return nil, err
 	}
 
 	e := &encoder{
 		cfg:           cfg,
-		kind:          kind,
-		label:         label,
+		source:        kind,
+		enc:           enc,
 		filteredFrame: astiav.AllocFrame(),
 		encodePacket:  astiav.AllocPacket(),
 	}
 
 	// Software sources targeting a hardware encoder need a hardware device
 	// context for the hwupload filter to upload frames to.
-	if !kind.hardwareInput() && (label == encVaapi || label == encNvenc) {
+	if !kind.hardwareInput() && (enc == encVaapi || enc == encNvenc) {
 		var hwType astiav.HardwareDeviceType
 		var device string
-		if label == encVaapi {
+		if enc == encVaapi {
 			hwType = astiav.HardwareDeviceTypeVAAPI
 			device = "" // default VAAPI render node
 		} else {
@@ -238,15 +227,15 @@ func newEncoder(cfg Config, kind sourceKind) (*encoder, error) {
 		hdc, err := astiav.CreateHardwareDeviceContext(hwType, device, nil, 0)
 		if err != nil {
 			e.free()
-			return nil, fmt.Errorf("video: create %s hardware device context: %w", label, err)
+			return nil, fmt.Errorf("video: create %s hardware device context: %w", enc, err)
 		}
 		e.hwDeviceContext = hdc
-		log.Printf("video: created %s hardware device context (device %q)", label, device)
+		log.Printf("video: created %s hardware device context (device %q)", enc, device)
 	}
 
-	log.Printf("video: encoder selected: %s (source=%s)", label, kind)
-	if cfg.LowPower && label != encVaapi {
-		log.Printf("video: low-power is a vaapi-only option; ignored for %s", label)
+	log.Printf("video: encoder selected: %s (source=%s)", enc, kind)
+	if cfg.LowPower && enc != encVaapi {
+		log.Printf("video: low-power is a vaapi-only option; ignored for %s", enc)
 	}
 	return e, nil
 }
@@ -300,7 +289,7 @@ func (e *encoder) initFilterGraph(decodeCodecContext *astiav.CodecContext, decod
 
 	params := astiav.AllocBuffersrcFilterContextParameters()
 	defer params.Free()
-	if e.kind.hardwareInput() {
+	if e.source.hardwareInput() {
 		params.SetHardwareFramesContext(decodeFrame.HardwareFramesContext())
 	}
 	params.SetWidth(decodeCodecContext.Width())
@@ -361,13 +350,13 @@ func (e *encoder) filterGraphDesc(srcWidth int) string {
 	}
 
 	switch {
-	case e.kind == sourceKmsgrab && e.label == encVaapi:
+	case e.source == sourceKmsgrab && e.enc == encVaapi:
 		if capped {
 			return fmt.Sprintf("hwmap=derive_device=vaapi,scale_vaapi=w=%d:format=nv12", e.cfg.MaxWidth)
 		}
 		return "hwmap=derive_device=vaapi,scale_vaapi=format=nv12"
 
-	case e.kind == sourceKmsgrab && e.label == encLibx264:
+	case e.source == sourceKmsgrab && e.enc == encLibx264:
 		// Download the vaapi frame to the CPU for software encoding.
 		base := "hwmap=derive_device=vaapi,scale_vaapi=format=nv12"
 		if capped {
@@ -375,25 +364,25 @@ func (e *encoder) filterGraphDesc(srcWidth int) string {
 		}
 		return base + ",hwdownload,format=yuv420p"
 
-	case e.kind == sourceX11grab && e.label == encLibx264:
+	case e.source == sourceX11grab && e.enc == encLibx264:
 		if capped {
 			return fmt.Sprintf("scale=%s,format=yuv420p", width())
 		}
 		return "format=yuv420p"
 
-	case e.kind == sourceX11grab && e.label == encVaapi:
+	case e.source == sourceX11grab && e.enc == encVaapi:
 		if capped {
 			return fmt.Sprintf("scale=%s,format=nv12,hwupload=derive_device=vaapi", width())
 		}
 		return "format=nv12,hwupload=derive_device=vaapi"
 
-	case e.kind == sourceX11grab && e.label == encNvenc:
+	case e.source == sourceX11grab && e.enc == encNvenc:
 		if capped {
 			return fmt.Sprintf("scale=%s,format=nv12,hwupload=derive_device=cuda", width())
 		}
 		return "format=nv12,hwupload=derive_device=cuda"
 
-	case e.kind == sourceDdagrab && e.label == encNvenc:
+	case e.source == sourceDdagrab && e.enc == encNvenc:
 		// ddagrab frames live on the D3D11 device; upload them to CUDA for
 		// nvenc via hwmap.
 		if capped {
@@ -401,13 +390,13 @@ func (e *encoder) filterGraphDesc(srcWidth int) string {
 		}
 		return "hwmap=derive_device=cuda,scale_cuda=format=nv12"
 
-	case e.kind == sourceDdagrab && e.label == encAMF:
+	case e.source == sourceDdagrab && e.enc == encAMF:
 		// h264_amf consumes D3D11 frames natively; convert BGRA to NV12 on
 		// the GPU via the D3D11 video processor (--video-width scaling is
 		// Linux-only).
 		return "scale_d3d11=format=nv12"
 
-	case e.kind == sourceDdagrab && e.label == encMF:
+	case e.source == sourceDdagrab && e.enc == encMF:
 		// h264_mf does NOT understand D3D11 hardware frames (it only accepts
 		// software NV12/YUV420p; MF MFTs that take D3D11 surfaces always do
 		// so inside their own device-context types) and scale_d3d11 fails on
@@ -423,7 +412,7 @@ func (e *encoder) filterGraphDesc(srcWidth int) string {
 		// (h264_mf requires NV12 or YUV420P input).
 		return "hwdownload,format=bgra,format=nv12"
 
-	case e.kind == sourceDdagrab && e.label == encLibx264:
+	case e.source == sourceDdagrab && e.enc == encLibx264:
 		// Download the D3D11 frame to the CPU for software encoding. As for
 		// h264_mf above, download in the native BGRA and convert in software.
 		if capped {
@@ -443,9 +432,9 @@ func (e *encoder) initEncoder() error {
 		return nil
 	}
 
-	enc := astiav.FindEncoderByName(e.label.codecName())
+	enc := astiav.FindEncoderByName(e.enc.codec)
 	if enc == nil {
-		return fmt.Errorf("video: encoder %s not found", e.label.codecName())
+		return fmt.Errorf("video: encoder %s not found", e.enc.codec)
 	}
 
 	e.encodeCodecContext = astiav.AllocCodecContext(enc)
@@ -462,7 +451,7 @@ func (e *encoder) initEncoder() error {
 	// h264_mf: request low-latency mode (CODECAPI_AVLowLatencyMode) via the
 	// generic codec flag; FF_DISABLE_AUTODETECT keeps mfenc from probing
 	// unrelated output profiles slower.
-	if e.label == encMF {
+	if e.enc == encMF {
 		e.encodeCodecContext.SetFlags(e.encodeCodecContext.Flags().Add(astiav.CodecContextFlagLowDelay))
 	}
 
@@ -482,13 +471,13 @@ func (e *encoder) initEncoder() error {
 	// Hardware encoders borrow the VAAPI/CUDA/D3D11 hardware frames context
 	// produced by the filter graph; the encoder derives its device from it.
 	// libx264 is pure software and needs no hardware context.
-	if e.label.isHardwareLabel() {
+	if e.enc.isHardware {
 		e.encodeCodecContext.SetHardwareFramesContext(e.filteredFrame.HardwareFramesContext())
 	}
 
 	opts := astiav.NewDictionary()
 	defer opts.Free()
-	switch e.label {
+	switch e.enc {
 	case encVaapi:
 		if err := opts.Set("qp", fmt.Sprintf("%d", e.cfg.QP), astiav.NewDictionaryFlags()); err != nil {
 			return fmt.Errorf("video: set qp option: %w", err)
@@ -584,13 +573,15 @@ func (e *encoder) initEncoder() error {
 		if err := opts.Set("profile", "baseline", astiav.NewDictionaryFlags()); err != nil {
 			return fmt.Errorf("video: set profile option: %w", err)
 		}
+	default:
+		return fmt.Errorf("video: unhandled video encoder type: %s", e.enc.codec)
 	}
 
 	if err := e.encodeCodecContext.Open(enc, opts); err != nil {
-		return fmt.Errorf("video: open %s encoder: %w", e.label.codecName(), err)
+		return fmt.Errorf("video: open %s encoder: %w", e.enc.codec, err)
 	}
 	log.Printf("video: %s encoder opened (%dx%d, timebase %s)",
-		e.label.codecName(), e.encodeCodecContext.Width(), e.encodeCodecContext.Height(), e.encodeCodecContext.TimeBase().String())
+		e.enc.codec, e.encodeCodecContext.Width(), e.encodeCodecContext.Height(), e.encodeCodecContext.TimeBase().String())
 	return nil
 }
 
