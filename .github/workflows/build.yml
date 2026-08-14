@@ -60,7 +60,8 @@ jobs:
             libgl1 libegl1 libwayland-client0 libwayland-cursor0 \
             libwayland-egl1 libx11-6 libxcursor1 libxrandr2 libxinerama1 libxi6 \
             libxkbcommon-dev libgl1-mesa-dev libopengl-dev libxcursor-dev libxrandr-dev \
-            libxinerama-dev libxi-dev libxft-dev libxxf86vm-dev 
+            libxinerama-dev libxi-dev libxft-dev libxxf86vm-dev libnuma1 libnuma-dev
+
 
       - name: Cache FFmpeg build
         id: cache-ffmpeg
@@ -68,6 +69,17 @@ jobs:
         with:
           path: ${{ github.workspace }}/ffmpeg
           key: ffmpeg-${{ env.FFMPEG_VERSION }}-linux-ubuntu22.04-${{ hashFiles('.github/workflows/build.yml') }}
+
+      # Install into the FFmpeg prefix (writable without sudo, covered by
+      # the FFmpeg cache, and already on PKG_CONFIG_PATH) rather than the
+      # default /usr/local, which the runner user cannot write to.
+      - name: Build nv-codec-headers
+        if: steps.cache-ffmpeg.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          git clone https://git.videolan.org/git/ffmpeg/nv-codec-headers.git
+          cd nv-codec-headers
+          make install PREFIX="${{ env.FFMPEG_PREFIX }}"
 
       - name: Build x264 from source
         if: steps.cache-ffmpeg.outputs.cache-hit != 'true'
@@ -100,8 +112,10 @@ jobs:
             --enable-gpl \
             --enable-version3 \
             --enable-libx264 \
+            --enable-nvenc \
             --enable-libdrm \
             --enable-vaapi \
+            --enable-swresample \
             --disable-doc \
             --disable-programs \
             --disable-ffplay \
@@ -113,7 +127,7 @@ jobs:
         run: go build -o inara -ldflags "-s -w -linkmode external" ./cmd/inara
 
       - name: Build GUI (inara_gui)
-        run: go build -tags migrated_fynedo -o inara_gui -ldflags "-H=windowsgui -s -w -linkmode external" ./cmd/inara_gui
+        run: go build -tags migrated_fynedo -o inara_gui -ldflags "-s -w -linkmode external" ./cmd/inara_gui
 
       - name: Stage artifact
         run: |
@@ -203,6 +217,7 @@ jobs:
             make
             diffutils
             patch
+            mingw-w64-x86_64-ffnvcodec-headers
 
       - name: Cache FFmpeg build
         id: cache-ffmpeg
@@ -247,6 +262,14 @@ jobs:
                 (Join-Path $env:GITHUB_WORKSPACE "ffmpeg-${env:FFMPEG_VERSION}.tar.xz")
           Fetch "https://code.videolan.org/videolan/x264/-/archive/${env:X264_REF}/x264-${env:X264_REF}.tar.gz" `
                 (Join-Path $env:GITHUB_WORKSPACE "x264-${env:X264_REF}.tar.gz")
+
+      - name: install amf
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          git clone https://github.com/GPUOpen-LibrariesAndSDKs/AMF.git
+          mkdir -p /usr/local/include/AMF
+          cp -r AMF/amf/public/include/* /usr/local/include/AMF/
 
       - name: Build FFmpeg from source
         if: steps.cache-ffmpeg.outputs.cache-hit != 'true'
@@ -294,12 +317,16 @@ jobs:
           PATCH
 
           ./configure \
+            --extra-cflags="-I/usr/local/include/AMF" \
             --prefix="${FFMPEG_PREFIX}" \
             --enable-static \
             --disable-shared \
             --enable-gpl \
             --enable-version3 \
             --enable-libx264 \
+            --enable-nvenc \
+            --enable-swresample \
+            --enable-amf \
             --disable-doc \
             --disable-programs \
             --disable-ffplay \
@@ -335,7 +362,7 @@ jobs:
         run: |
           export PKG_CONFIG_PATH="$FFMPEG_PREFIX/lib/pkgconfig"
           go build -ldflags "-s -w -linkmode external" -o inara.exe ./cmd/inara
-          go build -tags migrated_fynedo -ldflags "-s -w -linkmode external" -o inara_gui.exe ./cmd/inara_gui
+          go build -tags migrated_fynedo -ldflags "-H=windowsgui -s -w -linkmode external" -o inara_gui.exe ./cmd/inara_gui
 
       - name: Stage artifact
         shell: msys2 {0}
