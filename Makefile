@@ -3,7 +3,30 @@ BINDIR := $(PREFIX)/bin
 APPDIR := $(PREFIX)/share/applications
 ICONDIR := $(PREFIX)/share/icons/hicolor
 
-.PHONY: all install clean
+.PHONY: all install clean distclean
+
+# ---- FFmpeg 8.1.2 (statically linked into the single binary) ----
+# The system FFmpeg version may be incompatible with go-astiav; we build 8.1.2
+# statically and link it in, so the resulting binary needs no libav*.so.*
+# installed on the user's system. FFmpeg's own deps (libdrm, libva, libx264,
+# X11, ...) still link dynamically and are handled by dpkg-shlibdeps.
+# Download/build only happens when ffmpeg-8.1.2/_install/ is missing.
+FFMPEG_VERSION := 8.1.2
+FFMPEG_DIR     := ffmpeg-$(FFMPEG_VERSION)
+FFMPEG_PREFIX  := $(CURDIR)/$(FFMPEG_DIR)/_install
+FFMPEG_TARBALL := ffmpeg-$(FFMPEG_VERSION).tar.xz
+FFMPEG_URL     := https://ffmpeg.org/releases/$(FFMPEG_TARBALL)
+# Configure marker: present => FFmpeg already built+installed, skip everything.
+FFMPEG_PC      := $(FFMPEG_PREFIX)/lib/pkgconfig/libavcodec.pc
+FFMPEG_CONFIGURE_FLAGS := \
+	--prefix=$(FFMPEG_PREFIX) \
+	--disable-shared --enable-static --enable-pic \
+	--enable-gpl --enable-version3 \
+	--enable-libx264 --enable-libdrm --enable-vaapi \
+	--disable-doc --disable-programs --disable-ffplay --disable-ffprobe
+
+# Env for Go builds: point pkg-config at our static 8.1.2 and request static libs.
+FFMPEG_ENV := PKG_CONFIG_PATH=$(FFMPEG_PREFIX)/lib/pkgconfig PKG_CONFIG_FLAGS=--static
 
 # Sources and embedded assets that should trigger a rebuild
 SOURCES := $(shell find . -name '*.go' -not -path './third_party/*') go.mod go.sum \
@@ -11,11 +34,27 @@ SOURCES := $(shell find . -name '*.go' -not -path './third_party/*') go.mod go.s
 
 all: companion_gui companion
 
-companion_gui: $(SOURCES)
-	go build -tags migrated_fynedo -o companion_gui ./cmd/companion_gui
+# $(FFMPEG_PC): download + build + install FFmpeg 8.1.2 into $(FFMPEG_PREFIX).
+# Skipped entirely once $(FFMPEG_PC) exists.
+$(FFMPEG_PC):
+	@if [ ! -f $(FFMPEG_TARBALL) ]; then \
+		echo "Downloading $(FFMPEG_URL)"; \
+		curl -fL --retry 3 -o $(FFMPEG_TARBALL) $(FFMPEG_URL); \
+	fi
+	@if [ ! -d $(FFMPEG_DIR) ]; then \
+		echo "Extracting $(FFMPEG_TARBALL)"; \
+		tar xf $(FFMPEG_TARBALL); \
+	fi
+	cd $(FFMPEG_DIR) && (make distclean >/dev/null 2>&1 || true) && \
+		./configure $(FFMPEG_CONFIGURE_FLAGS) && \
+		$(MAKE) -j$$(nproc) && \
+		$(MAKE) install
 
-companion: $(SOURCES)
-	go build -o companion ./cmd/companion
+companion_gui: $(SOURCES) $(FFMPEG_PC)
+	$(FFMPEG_ENV) go build -tags migrated_fynedo -o companion_gui ./cmd/companion_gui
+
+companion: $(SOURCES) $(FFMPEG_PC)
+	$(FFMPEG_ENV) go build -o companion ./cmd/companion
 
 install: all
 	install -Dm755 companion $(DESTDIR)$(BINDIR)/companion
@@ -38,3 +77,6 @@ uninstall:
 
 clean:
 	rm -f companion_gui companion
+
+distclean: clean
+	rm -rf $(FFMPEG_DIR) $(FFMPEG_TARBALL)

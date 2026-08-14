@@ -6,7 +6,7 @@ pkgdesc="Connect your mobile device wirelessly to your PC and use it as trackpad
 arch=('x86_64')
 url="https://github.com/electronstudio/desktop_remote_mobile_companion"
 license=('GPL-3.0-only')
-depends=('ffmpeg' 'gcc-libs' 'libglvnd' 'mesa' 'libx11' 'libxcursor' 'libxrandr' 'libxinerama' 'libxi' 'wayland')
+depends=('x264' 'gcc-libs' 'libglvnd' 'mesa' 'libx11' 'libxcursor' 'libxrandr' 'libxinerama' 'libxi' 'wayland')
 makedepends=('go>=1.24')
 source=(
   "git+https://github.com/electronstudio/desktop_remote_mobile_companion.git"

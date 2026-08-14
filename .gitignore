@@ -3,6 +3,10 @@
 /companion
 /companion_gui
 *.exe
+
+# FFmpeg 8.1.2 built by the Makefile (source tree, objects, _install, tarball)
+/ffmpeg-*/
+/ffmpeg-*.tar.xz
 server.crt
 server.key
 .idea
