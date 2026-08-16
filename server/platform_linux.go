@@ -143,7 +143,10 @@ func dropSudoPrivileges() error {
 	return nil
 }
 
-func reExecWithSudo() {
+func reExecWithSudo(cli CLI) {
+	if cli.DontRunSudo {
+		return
+	}
 	color.Set(color.FgCyan)
 	fmt.Printf("\n\nAttempting to re-run with sudo privileges...\n\n")
 	color.Unset()
