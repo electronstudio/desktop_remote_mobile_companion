@@ -25,8 +25,8 @@ Tested mobile devices: iPhone, iPad + Apple Pencil.
 
 ## Compared to Weylus
 
-[Weylus](https://github.com/electronstudio/WeylusCommunityEdition) is a program for graphic tablet
-and display mirroring.  Inara explores some _different_ methods of implementing those features,
+[Weylus](https://github.com/electronstudio/WeylusCommunityEdition) is a program for simulating a graphics tablet
+and mirroring the display.  Inara explores some _different_ methods of implementing those features,
 which may not necessarily be better!
 
 Inara uses WebRTC connections. The underlying protocol is UDP rather than TCP which _may_ (or may not)
@@ -35,9 +35,12 @@ have lower latency.
 Inara mirrors the display using ffmpeg's kmsgrab, which _may_ (or may not) work better on Wayland (although doesn't
 work at all on Nvidia systems).
 
-Inara uses hardware accelerated VAAPI/CUDA encoding.
+Inara uses hardware accelerated VAAPI/CUDA encoding by default.  (Weylus says it has this, but it doesn't appear to be
+finished.)
 
 Inara is written in Go rather than Rust.
+
+Inara simulates other devices besides just a graphics tablet.
 
 
 ## Install
