@@ -25,8 +25,8 @@ Tested mobile devices: iPhone, iPad + Apple Pencil.
 
 ## Compared to Weylus
 
-[Weylus](https://github.com/electronstudio/WeylusCommunityEdition) is a program for graphic tablet
-and display mirroring.  Inara explores some _different_ methods of implementing those features,
+[Weylus](https://github.com/electronstudio/WeylusCommunityEdition) is a program for simulating a graphics tablet
+and mirroring the display.  Inara explores some _different_ methods of implementing those features,
 which may not necessarily be better!
 
 Inara uses WebRTC connections. The underlying protocol is UDP rather than TCP which _may_ (or may not)
@@ -35,14 +35,19 @@ have lower latency.
 Inara mirrors the display using ffmpeg's kmsgrab, which _may_ (or may not) work better on Wayland (although doesn't
 work at all on Nvidia systems).
 
-Inara uses hardware accelerated VAAPI/CUDA encoding.
+Inara uses hardware accelerated VAAPI/CUDA encoding by default.  (Weylus says it has this, but it doesn't appear to be
+finished.)
 
 Inara is written in Go rather than Rust.
+
+Inara simulates other devices besides just a graphics tablet.
 
 
 ## Install
 
-Download from [releases](https://github.com/electronstudio/desktop_remote_mobile_companion/releases).  To install on Debian/Ubuntu:
+### Linux
+
+Download a package from [releases](https://github.com/electronstudio/desktop_remote_mobile_companion/releases).  To install the deb package on Debian/Ubuntu:
 
     cd ~/Downloads
     sudo apt install ./inara*.deb
@@ -55,22 +60,18 @@ If your OS firewall blocks connections by default (e.g. CachyOS) you will need t
 
     sudo ufw allow 8080
 
-
 ## Run
 
-For a GUI with options, run from your start menu, or run from terminal:
+For the GUI version, run:
 
 ```bash
 ./inara_gui
 ```
 
-Then click the `Start` button.  If it doesn't work, try clicking `Fix permissions`.
+If you installed a Linux package, it will appear on your start menu.  On Windows there is no installer, you just
+double click `inara_gui.exe`.
 
-To run with no GUI:
-
-```bash
-./inara
-```
+You will see a window with options.  Click the `Start` button.  If it doesn't work, try clicking `Fix permissions`.
 
 The first time it runs, a self-signed certificate is created in your user cache
 directory (`$HOME/.cache/inara` on Linux).  Delete it to re-generate if
@@ -95,35 +96,30 @@ The tools available so far are: graphics tablet, trackpad, log output.
 
 ![](docs/ipad7.jpg)
 
+### Nvidia on Linux
+
+Wayland is not supported by Nvidia on Linux.  Use X11 and specify `--video-source x11grab`
 
 ## Build
 
 ### Arch (CachyOS, Artix, etc) Linux
 
+Install from AUR: https://aur.archlinux.org/packages/inara-git e.g.
+
 ```bash
-git clone https://github.com/electronstudio/desktop_remote_mobile_companion.git
-cd desktop_remote_mobile_companion
-makepkg -si
+paru inara-git
 ```
 
 ### Debian, Ubuntu etc
 
 ```bash
 sudo apt install libavcodec-dev libavfilter-dev libavformat-dev \
-        libavutil-dev libavdevice-dev libdrm-dev
-go build -o inara ./cmd/inara
-```
-
-To build the GUI (`inara_gui`) you additionally need the Fyne/GLFW
-runtime libraries. On Debian:
-
-```bash
-sudo apt install libgl1 libegl1 libwayland-client0 libwayland-cursor0 \
+        libavutil-dev libavdevice-dev libdrm-dev libgl1 libegl1 libwayland-client0 libwayland-cursor0 \
         libwayland-egl1 libx11-6 libxcursor1 libxrandr2 libxinerama1 libxi6
 make
 ```
 
-## Advanced
+## Advanced (Linux)
 
 If you can't see your mouse pointer, you need to disable hardware cursor:
 
@@ -138,7 +134,7 @@ This is required by some software such as Gnome.  But you can disable it:
 
     inara --dont-grab-mouse
 
-## Security
+## Security (Linux)
 
 To act as a trackpad or tablet, Inara requires access to `uinput`.  You have three options
 for getting this:

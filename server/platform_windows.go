@@ -12,4 +12,4 @@ func dropSudoPrivileges() error {
 	return nil
 }
 
-func reExecWithSudo() {}
+func reExecWithSudo(cli CLI) {}

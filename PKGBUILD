@@ -1,13 +1,13 @@
 # Maintainer: Richard Smith <aur@electronstudio.co.uk>
 pkgname=inara-git
-pkgver=0  # placeholder, overwritten by pkgver()
+pkgver=0.7.0.r70.432463c  # placeholder, overwritten by pkgver()
 pkgrel=1
-pkgdesc="Connect your mobile device wirelessly to your PC and use it as trackpad, graphics tablet, etc"
+pkgdesc="Use mobile device as trackpad, graphics tablet, for PC."
 arch=('x86_64')
 url="https://github.com/electronstudio/desktop_remote_mobile_companion"
 license=('GPL-3.0-only')
-depends=('x264' 'gcc-libs' 'libglvnd' 'mesa' 'libx11' 'libxcursor' 'libxrandr' 'libxinerama' 'libxi' 'wayland')
-makedepends=('go>=1.24')
+depends=('x264' 'gcc-libs' 'libglvnd' 'mesa' 'libx11' 'libxcursor' 'libxrandr' 'libxinerama' 'libxi' 'wayland' 'libxkbcommon' 'libvdpau' 'alsa-lib' 'hicolor-icon-theme' 'libva' 'sndio' 'libxv')
+makedepends=('go>=1.26' 'git' 'nasm')
 source=(
   "git+https://github.com/electronstudio/desktop_remote_mobile_companion.git"
 )
@@ -22,8 +22,13 @@ pkgver() {
 build() {
   cd "$srcdir/desktop_remote_mobile_companion"
   export GOFLAGS=-buildvcs=false
-  go build -o inara ./cmd/inara
-  go build -tags migrated_fynedo -o inara_gui ./cmd/inara_gui
+  export CGO_CFLAGS=""
+  export CGO_LDFLAGS=""
+  export CFLAGS="-march=native -O3"
+  export CXXFLAGS="-march=native -O3"
+  export LDFLAGS=""
+  export LTOFLAGS=""
+  make -f Makefile
 }
 
 package() {

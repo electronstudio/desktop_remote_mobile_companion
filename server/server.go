@@ -153,7 +153,7 @@ func Run(cli CLI) {
 		color.Set(color.FgYellow)
 		log.Printf("failed to register virtual trackpad: %v\n\n%s", err, uinputInstructions)
 		color.Unset()
-		reExecWithSudo()
+		reExecWithSudo(cli)
 	}
 	defer pad.Close()
 
@@ -163,7 +163,7 @@ func Run(cli CLI) {
 		color.Set(color.FgYellow)
 		log.Printf("failed to register virtual graphics tablet: %v\n\n%s", err, uinputInstructions)
 		color.Unset()
-		reExecWithSudo()
+		reExecWithSudo(cli)
 	}
 	defer tabletDev.Close()
 
@@ -251,9 +251,7 @@ func Run(cli CLI) {
 				log.Print(videoMissingCapInstructions)
 			}
 			color.Unset()
-			if !cli.DontRunSudo {
-				reExecWithSudo()
-			}
+			reExecWithSudo(cli)
 			videoEnabled = false
 		}
 	}

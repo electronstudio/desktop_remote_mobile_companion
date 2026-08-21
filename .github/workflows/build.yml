@@ -263,13 +263,27 @@ jobs:
           Fetch "https://code.videolan.org/videolan/x264/-/archive/${env:X264_REF}/x264-${env:X264_REF}.tar.gz" `
                 (Join-Path $env:GITHUB_WORKSPACE "x264-${env:X264_REF}.tar.gz")
 
+      # The AMF repo has grown to ~10k files of test/media content, so clone
+      # only the public headers. Install them into the MinGW64 compiler's
+      # default include path ($MINGW_PREFIX/include/AMF) so no --extra-cflags
+      # is needed; /usr/local/include is the MSYS2 (not mingw-w64) prefix and
+      # is not searched by the mingw-w64 gcc, which caused FFmpeg's configure
+      # to fail its AMF/LoadLibrary checks with "ERROR: amf requested ...".
       - name: install amf
+        if: steps.cache-ffmpeg.outputs.cache-hit != 'true'
         shell: msys2 {0}
         run: |
           set -euo pipefail
-          git clone https://github.com/GPUOpen-LibrariesAndSDKs/AMF.git
-          mkdir -p /usr/local/include/AMF
-          cp -r AMF/amf/public/include/* /usr/local/include/AMF/
+          git clone --depth 1 --filter=blob:none --sparse https://github.com/GPUOpen-LibrariesAndSDKs/AMF.git
+          cd AMF
+          git sparse-checkout set amf/public/include
+          # Headers are included as <AMF/core/...>, so the contents of
+          # amf/public/include go into $MINGW_PREFIX/include/AMF.
+          dest="${MINGW_PREFIX}/include/AMF"
+          mkdir -p "$dest"
+          cp -r amf/public/include/* "$dest/"
+          test -f "$dest/core/Version.h"
+          ls "$dest/core/Version.h" "$dest/components/VideoEncoderVCE.h"
 
       - name: Build FFmpeg from source
         if: steps.cache-ffmpeg.outputs.cache-hit != 'true'
@@ -297,25 +311,10 @@ jobs:
           tar -C /tmp -xJf "${FFMPEG_TARBALL}"
           cd "/tmp/ffmpeg-${FFMPEG_VERSION}"
 
-          # Work around Windows command-line length limits when archiving
-          # many object files into the static libraries.
-          patch -p1 <<'PATCH' || true
-          diff --git a/ffbuild/library.mak b/ffbuild/library.mak
-          index 793e9d41fa..e3c15e1d67 100644
-          --- a/ffbuild/library.mak
-          +++ b/ffbuild/library.mak
-          @@ -35,7 +35,8 @@ OBJS += $(SHLIBOBJS)
-           endif
-           $(SUBDIR)$(LIBNAME): $(OBJS) $(STLIBOBJS)
-          	$(RM) $@
-          -	$(AR) $(ARFLAGS) $(AR_O) $^
-          +	$(file > objs.txt, $^)
-          +	$(AR) $(ARFLAGS) $(AR_O) @objs.txt
-          	$(RANLIB) $@
-
-           install-headers: install-lib$(NAME)-headers install-lib$(NAME)-pkgconfig
-          PATCH
-
+          # FFmpeg >= 8.0 supports GNU ar response files natively
+          # (configure auto-detects them and ffbuild/library.mak passes the
+          # object list via a response file), so the long-command-line
+          # workaround patch is no longer needed.
           ./configure \
             --extra-cflags="-I/usr/local/include/AMF" \
             --prefix="${FFMPEG_PREFIX}" \
