@@ -25,7 +25,6 @@ package tablet
 
 import (
 	"fmt"
-	"math"
 	"sync"
 	"time"
 
@@ -38,12 +37,10 @@ import (
 
 const (
 	axisMax             = 32767
-	resolution          = 200  // units/mm — set via UI_ABS_SETUP at device creation
-	toolSerial          = 1    // MSC_SERIAL tool serial for tracking
-	hoverDist           = 10   // ABS_DISTANCE while hovering (keeps tool in proximity)
-	pressureMax         = 4096 // ABS_PRESSURE maximum (matches the axis range below)
-	tiltMin             = -90  // ABS_TILT_X/Y range, degrees (matches PointerEvent tiltX/tiltY)
-	tiltMax             = 90
+	resolution          = 200                  // units/mm — set via UI_ABS_SETUP at device creation
+	toolSerial          = 1                    // MSC_SERIAL tool serial for tracking
+	hoverDist           = 10                   // ABS_DISTANCE while hovering (keeps tool in proximity)
+	pressureMax         = 4096                 // ABS_PRESSURE maximum (matches the axis range below)
 	proximityToTipDelay = 8 * time.Millisecond // gap between a fresh proximity-in and tip-down; see beginStroke
 	// libinput derives tablet tip state from ABS_PRESSURE crossing a threshold
 	// (it ignores BTN_TOUCH when an ABS_PRESSURE axis exists), defaulting to ~5%
@@ -511,77 +508,6 @@ func (d *device) tipPressure() int32 {
 		return d.pressure
 	}
 	return tipFloor
-}
-
-// panelToContent maps a raw panel coordinate (CSS px) to the fraction
-// [0,1] of the desktop it points at, accounting for the black bars the
-// client adds with object-fit: contain when the desktop video's aspect ratio
-// (capW x capH) differs from the panel's (panelW x panelH). The video is
-// scaled by s = min(panelW/capW, panelH/capH) and centred, so the displayed
-// image occupies disp = cap*s on each axis, offset by off = (panel-disp)/2;
-// coordinates in the bars clamp to the desktop edge. Coordinates outside
-// the panel (a captured pointer dragged off it) clamp to the panel first.
-//
-// With no active video (capW/capH <= 0) the mapping is the identity v/panel
-// so the tablet still spans the whole desktop (--video-source=none). A
-// non-positive panel extent (unknown dimensions) parks that axis at its
-// centre rather than dividing by zero.
-func panelToContent(x, y, panelW, panelH, capW, capH float64) (float64, float64) {
-	nx := normClamp(x, panelW)
-	ny := normClamp(y, panelH)
-	if capW <= 0 || capH <= 0 || panelW <= 0 || panelH <= 0 {
-		return nx, ny
-	}
-	scale := math.Min(panelW/capW, panelH/capH)
-	dispW := capW * scale
-	dispH := capH * scale
-	offX := (panelW - dispW) / 2
-	offY := (panelH - dispH) / 2
-	cx := clamp((x - offX) / dispW)
-	cy := clamp((y - offY) / dispH)
-	return cx, cy
-}
-
-// normClamp divides v by size and clamps the result to [0,1], clamping v to
-// the panel first so a captured pointer dragged off the panel pins to its
-// edge. A non-positive size (unknown panel dimensions) yields the neutral
-// centre 0.5.
-func normClamp(v, size float64) float64 {
-	if size <= 0 {
-		return 0.5
-	}
-	if v < 0 {
-		v = 0
-	}
-	if v > size {
-		v = size
-	}
-	return v / size
-}
-
-// clamp constrains v to [0,1].
-func clamp(v float64) float64 {
-	if v < 0 {
-		return 0
-	}
-	if v > 1 {
-		return 1
-	}
-	return v
-}
-
-func clampTilt(v *int) int32 {
-	if v == nil {
-		return 0
-	}
-	t := int32(*v)
-	if t < tiltMin {
-		return tiltMin
-	}
-	if t > tiltMax {
-		return tiltMax
-	}
-	return t
 }
 
 func boolToInt(b bool) int32 {

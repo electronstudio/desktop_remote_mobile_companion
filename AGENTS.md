@@ -49,6 +49,7 @@ github.com/electronstudio/desktop_remote_mobile_companion
 - `input/processor.go` — `EventProcessor` and `Activator` interfaces the signaling layer routes data-channel events through.
 - `trackpad/trackpad_linux.go` — virtual Linux multitouch trackpad (Stage 2).
 - `tablet/tablet_linux.go` — virtual Linux absolute graphics tablet.
+- `tablet/tablet_windows.go` — Windows backend: injects a synthetic pen via `CreateSyntheticPointerDevice` + `InjectSyntheticPointerInput` (Windows 10 1809+; user-mode, no driver/admin). The metadata-generated `github.com/deploymenttheory/go-bindings-win32` bindings supply the pointer structs/enums and the inject/destroy wrappers; `CreateSyntheticPointerDevice` is absent from Microsoft's win32metadata, so that one proc is resolved locally, as are the `PEN_MASK_*` constants. No keep-alive/tipFloor: Windows has no libinput quirk/Mutter cooldown, and contact is expressed by pointer flags (INRANGE/INCONTACT/DOWN/UPDATE/UP), not a pressure threshold. `tablet/tablet.go` holds the cross-platform `Device` interface and the shared panel→content/tilt helpers used by both backends.
 - `video/video_linux.go` — Linux kmsgrab capture backend (DRM framebuffer) feeding a Pion H264 WebRTC track.
 - `video/video_x11grab_linux.go` — Linux x11grab capture backend (X server).
 - `video/encoder.go` — shared H264 encoder + filter-graph helper (the orthogonal "encoder axis": h264_vaapi / h264_nvenc / libx264), used by all capture backends.
@@ -269,6 +270,7 @@ Key Go modules:
 - `github.com/alexflint/go-arg` — command-line argument parsing.
 - `github.com/jbdemonte/virtual-device` — virtual Linux input devices via `uinput`.
 - `github.com/asticode/go-astiav` — FFmpeg/libav C bindings for desktop capture (kmsgrab) and VAAPI H264 encoding.
+- `github.com/deploymenttheory/go-bindings-win32` — generated Win32 bindings used by the Windows tablet backend (`ui/input/pointer` synthetic-pen injection structs, enums and wrappers).
 
 No JavaScript build step is used; `static/app.js` is served as-is.
 

@@ -7,7 +7,7 @@ Connect your mobile device wirelessly to your PC and use it as:
 | Feature               | Linux Wayland  | Linux X11 | Windows | Macos |
 |-----------------------|----------------|-----------|---------|-------|
 | Trackpad              | ✅             | ✅        | ❌      | ❌    |
-| Graphics tablet       | ✅             | ✅        | ❌      | ❌    |
+| Graphics tablet       | ✅             | ✅        | ✅      | ❌    |
 | Display mirror        | ✅ (Intel/AMD) | ✅        | ✅      | ❌    |
 | ~~Camera~~            | ❌             | ❌        | ❌      | ❌    |
 | ~~Microphone~~        | ❌             | ❌        | ❌      | ❌    |
@@ -17,9 +17,9 @@ Connect your mobile device wirelessly to your PC and use it as:
 | ~~Game controller~~   | ❌             | ❌        | ❌      | ❌    |
 | ~~File send/receive~~ | ❌             | ❌        | ❌      | ❌    |
 
-Tested desktops: Gnome Wayland, XFCE X11.
+Tested desktops: Gnome Wayland, XFCE X11, Windows 11.
 
-Tested tablet software: Gimp, Krita
+Tested tablet software: Gimp, Krita (Windows: enable Windows Ink and restart)
 
 Tested mobile devices: iPhone, iPad + Apple Pencil.
 
