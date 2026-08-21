@@ -81,10 +81,14 @@ type Config struct {
 type Streamer interface {
 	// Start launches the capture/encode goroutine writing H264 samples to the
 	// track returned by Track. It returns immediately. The goroutine runs
-	// until Stop is called.
+	// until Stop is called. Start is idempotent: only the first call starts
+	// the pipeline (the WebRTC session calls Start on every Connected state
+	// transition, which can fire repeatedly after an ICE restart), and a
+	// call after Stop is a no-op.
 	Start()
 	// Stop signals the capture goroutine to stop and frees all resources. It
-	// is safe to call multiple times.
+	// is safe to call multiple times and safe to call before Start: a
+	// pipeline that was never started has no goroutine to wait for.
 	Stop()
 	// Track returns the H264 WebRTC track the encoded samples are written to.
 	// It is non-nil for the lifetime of a successfully-constructed Streamer.

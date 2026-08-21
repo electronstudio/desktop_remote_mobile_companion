@@ -39,6 +39,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -58,6 +59,19 @@ type ddagrabStreamer struct {
 	stop chan struct{}
 	done chan struct{}
 	pts  int64
+
+	// mu guards started/stopped so Start and Stop are safe in any order and
+	// from concurrent callers. The WebRTC session calls Start on every
+	// PeerConnectionStateConnected transition, which can fire more than
+	// once per connection (e.g. after a transient drop/ICE restart):
+	// spawning a second captureLoop would double-close done (panic: close
+	// of closed channel) and race two goroutines on the FFmpeg contexts.
+	// Conversely Stop before Start (AddTrack failure, or a client that
+	// disconnects before Connected) must not block on done — no capture
+	// goroutine will ever close it.
+	mu      sync.Mutex
+	started bool
+	stopped bool
 
 	// framesWritten counts H264 samples pushed to the track, for periodic
 	// stats logging. Read/written atomically so it is safe from the capture
@@ -136,8 +150,17 @@ func newDdagrabStreamer(cfg Config) (*ddagrabStreamer, error) {
 
 // Start launches the capture/encode goroutine writing H264 samples to the
 // track returned by Track. It returns immediately. The goroutine runs until
-// Stop is called.
+// Stop is called. Start is idempotent: only the first call launches the
+// goroutine, and a call after Stop is a no-op (see mu/started/stopped).
 func (s *ddagrabStreamer) Start() {
+	s.mu.Lock()
+	if s.started || s.stopped {
+		s.mu.Unlock()
+		return
+	}
+	s.started = true
+	s.mu.Unlock()
+
 	log.Printf("video: starting ddagrab capture/encode goroutine")
 	go s.captureLoop()
 }
@@ -146,17 +169,23 @@ func (s *ddagrabStreamer) Start() {
 func (s *ddagrabStreamer) Track() *webrtc.TrackLocalStaticSample { return s.track }
 
 // Stop signals the capture goroutine to stop and frees all resources. It is
-// safe to call multiple times.
+// safe to call multiple times, and safe to call before Start: a pipeline
+// that was never started has no goroutine to wait for.
 func (s *ddagrabStreamer) Stop() {
-	select {
-	case <-s.stop:
-		// already stopped
+	s.mu.Lock()
+	if s.stopped {
+		s.mu.Unlock()
 		return
-	default:
-		log.Printf("video: stopping ddagrab capture pipeline")
-		close(s.stop)
 	}
-	<-s.done
+	s.stopped = true
+	started := s.started
+	s.mu.Unlock()
+
+	log.Printf("video: stopping ddagrab capture pipeline")
+	close(s.stop)
+	if started {
+		<-s.done
+	}
 	s.freeInputDecode()
 	s.enc.free()
 	CaptureWidth.Store(0)
