@@ -12,6 +12,7 @@ import (
 	"encoding/hex"
 	"encoding/pem"
 	"fmt"
+	"html"
 	"io/fs"
 	"log"
 	"math/big"
@@ -58,6 +59,7 @@ type CLI struct {
 	VideoIntelFast bool   `arg:"--video-intel-fast" default:"false" help:"enable h264_vaapi low-power mode; ignored for other encoders"`
 	DontGrabMouse  bool   `arg:"--dont-grab-mouse" default:"false" help:"disable the tablet hover keep-alive (Mutter cooldown workaround); use on compositors without the cooldown (e.g. wlroots) so the mouse is not grabbed while idle"`
 	DontRunSudo    bool   `arg:"--dont-run-sudo" default:"false" help:"do not try to gain privileges with sudo"`
+	Passcode       string `arg:"--passcode,env:INARA_PASSCODE" help:"passphrase clients must enter to connect; also read from $INARA_PASSCODE (the flag overrides the env var); empty disables authentication"`
 }
 
 // CLIDefaults returns a CLI populated with the go-arg `default:` struct-tag
@@ -133,7 +135,12 @@ func Run(cli CLI) {
 	// so the CAP_SYS_ADMIN check below only has to clear it once.
 	videoEnabled := cli.VideoSource != "none"
 
+	auth := newAuthGate(cli.Passcode)
+
 	log.Printf("Desktop Remote Mobile Companion v%s", versionStr)
+	if auth.enabled() {
+		log.Printf("passcode authentication enabled") // the passcode itself is never logged
+	}
 
 	certDir, err := certDirectory()
 	if err != nil {
@@ -176,7 +183,16 @@ func Run(cli CLI) {
 	if err != nil {
 		log.Fatalf("failed to read embedded index.html: %v", err)
 	}
-	indexHTML := strings.ReplaceAll(string(indexBytes), "{{VERSION}}", versionStr)
+	// The page title shows the machine hostname so a user with several
+	// servers can tell their browser tabs / installed web apps apart.
+	titleStr := "Inara"
+	if hostname, err := os.Hostname(); err == nil && hostname != "" {
+		titleStr = "Inara " + hostname
+	}
+	indexHTML := strings.NewReplacer(
+		"{{VERSION}}", versionStr,
+		"{{TITLE}}", html.EscapeString(titleStr),
+	).Replace(string(indexBytes))
 	fileServer := http.FileServer(http.FS(staticSub))
 
 	// videoCfg is built once and reused for every connection's capture
@@ -208,7 +224,20 @@ func Run(cli CLI) {
 		}
 		fileServer.ServeHTTP(w, r)
 	})
+	// /auth answers passcode-status queries (GET) and passcode login (POST).
+	// It is registered unconditionally: with no passcode configured it simply
+	// reports required=false, keeping the client logic uniform.
+	http.Handle("/auth", auth)
 	http.HandleFunc("/signal", func(w http.ResponseWriter, r *http.Request) {
+		// The browser attaches the session cookie to the WebSocket handshake
+		// automatically. Gating the handshake here also gates the WebRTC data
+		// channel, because no peer connection can be established without
+		// exchanging SDP through this endpoint.
+		if !auth.check(r) {
+			log.Printf("rejected unauthenticated signaling attempt from %s", r.RemoteAddr)
+			http.Error(w, "authentication required", http.StatusForbidden)
+			return
+		}
 		ws, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
 			log.Printf("websocket upgrade failed: %v", err)

@@ -96,6 +96,7 @@ Command-line flags are handled by `github.com/alexflint/go-arg`.
 | `--video-qp` | `24` | Encoder quality (h264_vaapi/h264_nvenc QP, or libx264 CRF; lower is higher quality) |
 | `--low-power` | `0` | h264_vaapi low-power mode (0 or 1); ignored for other encoders |
 | `--video-width` | `0` | Cap output width; `0` = native (reserved for future downscaling) |
+| `--passcode` | (empty) | Passphrase clients must enter to connect. Also read from `$INARA_PASSCODE` (the flag overrides the env var); empty disables authentication. When set, the web client shows a passcode screen that POSTs to `/auth`, receiving a persistent (30-day) HttpOnly session cookie backed by a random per-run token (server restart invalidates all sessions); `/signal` requires that cookie, which transitively gates the WebRTC data channel since SDP can only be exchanged through `/signal`. Failed logins are delayed by 1 s and the comparison uses `crypto/subtle` (see `server/auth.go`) |
 | `--no-tablet-keepalive` | `false` | Disable the tablet hover keep-alive (a GNOME/Mutter cooldown workaround). On compositors without that cooldown (e.g. wlroots/Sway), set this so the system mouse is not grabbed while the tablet panel is idle |
 
 Example:

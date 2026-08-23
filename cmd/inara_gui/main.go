@@ -166,6 +166,20 @@ func main() {
 		// half-typed value cannot break the server start.
 	}
 
+	// Passcode entry: NewPasswordEntry masks the text as it is typed (with a
+	// reveal toggle). Prefilled from cli.Passcode, which CLIDefaults has
+	// already populated from $INARA_PASSCODE when set. Empty disables
+	// authentication.
+	passcodeEntry := widget.NewPasswordEntry()
+	passcodeEntry.SetPlaceHolder("none")
+	if cli.Passcode != "" {
+		passcodeEntry.SetText(cli.Passcode)
+		passcodeEntry.Refresh() // ensure the prefilled text renders masked
+	}
+	passcodeEntry.OnChanged = func(s string) {
+		cli.Passcode = s
+	}
+
 	videoSourceSelect := widget.NewSelect([]string{"kmsgrab", "x11grab", "none"}, func(s string) {
 		cli.VideoSource = s
 	})
@@ -246,6 +260,7 @@ func main() {
 
 	form := widget.NewForm(
 		widget.NewFormItem("Port", portEntry),
+		widget.NewFormItem("Passcode", passcodeEntry),
 		widget.NewFormItem("Video source", videoSourceSelect),
 		widget.NewFormItem("Video encoder", videoEncoderSelect),
 		widget.NewFormItem("Video card", videoCardSelect),
@@ -262,6 +277,7 @@ func main() {
 		// Disable the config widgets: the running server has already captured
 		// cli, so further edits would have no effect and suggest otherwise.
 		portEntry.Disable()
+		passcodeEntry.Disable()
 		videoSourceSelect.Disable()
 		videoEncoderSelect.Disable()
 		videoCardSelect.Disable()

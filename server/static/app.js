@@ -412,12 +412,91 @@
     }
   }
 
+  // --- Passcode authentication -------------------------------------------
+  // When the server is started with --passcode, /signal refuses the
+  // WebSocket upgrade without a session cookie. The cookie is obtained by
+  // POSTing the passcode to /auth; it is HttpOnly, so this script never sees
+  // it — it only asks /auth (GET) whether a passcode is required and
+  // whether this browser already has a valid session, and shows the
+  // full-screen prompt when not. The prompt replaces (rather than crashes
+  // into) the reconnect loop: connect() is only ever called once
+  // authenticated, so a 403-rejected handshake cannot spin the backoff.
+  const authOverlay = document.getElementById('auth-overlay');
+  const authForm = document.getElementById('auth-form');
+  const authInput = document.getElementById('auth-passcode');
+  const authError = document.getElementById('auth-error');
+  const authSubmit = document.getElementById('auth-submit');
+
+  function showAuthOverlay() {
+    authOverlay.hidden = false;
+    authInput.focus();
+  }
+
+  function hideAuthOverlay() {
+    authOverlay.hidden = true;
+  }
+
+  async function checkAuthStatus() {
+    try {
+      const res = await fetch('/auth', { cache: 'no-store' });
+      return await res.json(); // { required, authenticated }
+    } catch (err) {
+      // Server unreachable (e.g. mid-restart): don't gate on auth; let the
+      // WebSocket reconnect loop handle the backoff.
+      return { required: false, authenticated: true };
+    }
+  }
+
+  // Connect only once the session is authenticated. Also used for every
+  // reconnect so that a server restart (which invalidates all cookies — the
+  // session token is per-run) cleanly brings the passcode prompt back
+  // instead of looping on rejected handshakes.
+  async function startWhenAuthed() {
+    const status = await checkAuthStatus();
+    if (status.required && !status.authenticated) {
+      log('Passcode required', 'err');
+      showAuthOverlay();
+      return;
+    }
+    hideAuthOverlay();
+    connect();
+  }
+
+  authForm.addEventListener('submit', async e => {
+    e.preventDefault();
+    authError.hidden = true;
+    authSubmit.disabled = true;
+    try {
+      const res = await fetch('/auth', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        cache: 'no-store',
+        body: JSON.stringify({ passcode: authInput.value })
+      });
+      if (res.ok) {
+        authInput.value = '';
+        log('Authenticated', 'ok');
+        hideAuthOverlay();
+        connect();
+      } else {
+        authError.textContent = 'Wrong passcode — try again';
+        authError.hidden = false;
+        authInput.select();
+      }
+    } catch (err) {
+      authError.textContent = 'Could not reach the server';
+      authError.hidden = false;
+    } finally {
+      authSubmit.disabled = false;
+    }
+  });
+
   function scheduleReconnect(reason) {
     if (conn.reconnectTimer) return;
     log(`${reason} — reconnecting in ${conn.reconnectDelay}ms...`, 'err');
     conn.reconnectTimer = setTimeout(() => {
       conn.reconnectTimer = null;
-      connect();
+      startWhenAuthed();
     }, conn.reconnectDelay);
     conn.reconnectDelay = Math.min(conn.reconnectDelay * 2, conn.maxReconnectDelay);
   }
@@ -574,7 +653,7 @@
   }
 
   document.querySelectorAll('.area').forEach(initArea);
-  connect();
+  startWhenAuthed();
 
   // We no longer register a service worker. A SW intercepted top-level
   // navigation, which prevented iOS Safari from showing the "accept
