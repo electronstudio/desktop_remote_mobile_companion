@@ -135,7 +135,7 @@ jobs:
           mkdir -p "dist/$name"
           cp inara "dist/$name/"
           cp inara_gui "dist/$name/"
-          cp README.md LICENSE "dist/$name/"
+          cp README.md LICENSE inara.desktop.in install.sh uninstall.sh server/static/icon-512.png "dist/$name/"
 
       - name: Upload
         uses: actions/upload-artifact@v7
@@ -425,6 +425,8 @@ jobs:
 
       - name: Build combined archives
         run: |
+          sudo apt update
+          sudo apt install -y makeself
           version="${{ needs.get-version.outputs.version }}"
           outdir="dist/inara-all-$version"
           mkdir -p "$outdir"
@@ -433,7 +435,10 @@ jobs:
             if [[ "$name" == inara-linux-* ]]; then
               chmod +x "artifacts/$name/inara"
               chmod +x "artifacts/$name/inara_gui"
+              chmod +x "artifacts/$name/install.sh"
+              chmod +x "artifacts/$name/uninstall.sh"
               (cd artifacts && tar -cJf "../$outdir/$name.tar.xz" "$name")
+              makeself --xz "artifacts/$name" "$outdir/$name.installer.run" "Inara installer" ./install.sh
             elif [[ "$name" == inara-deb-* ]]; then
               cp "artifacts/$name"/*.deb "$outdir/"
             else
