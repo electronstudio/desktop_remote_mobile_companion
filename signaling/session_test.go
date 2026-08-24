@@ -3,10 +3,15 @@ package signaling
 import (
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/electronstudio/desktop_remote_mobile_companion/input"
 	"github.com/electronstudio/desktop_remote_mobile_companion/video"
+	"github.com/gorilla/websocket"
 	"github.com/pion/webrtc/v4"
 )
 
@@ -227,6 +232,53 @@ func TestMaybeAddVideoTrack(t *testing.T) {
 	if fake.stops != 0 {
 		t.Errorf("success: Stop must not be called, got %d", fake.stops)
 	}
+}
+
+// TestCloseUnblocksRun confirms Close makes a running Session return from
+// Run (the property server.Shutdown relies on, since http.Server.Shutdown
+// does not close hijacked WebSocket connections) and that Close is safe to
+// call twice.
+func TestCloseUnblocksRun(t *testing.T) {
+	upsgrader := websocket.Upgrader{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, err := upsgrader.Upgrade(w, r, nil); err != nil {
+			return
+		}
+		// Keep the server side open: the test only needs a live peer socket.
+		select {}
+	}))
+	defer srv.Close()
+
+	// The Session needs any live websocket: use the client end of the pair
+	// (Close/runLoop treat it symmetrically).
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http")
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	s := New(Config{WS: conn, Remote: "test", Processors: map[string]input.EventProcessor{}})
+	done := make(chan struct{})
+	go func() {
+		_ = s.Run()
+		close(done)
+	}()
+
+	s.Close()
+	s.Close() // second call must be a harmless no-op
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run did not return after Close")
+	}
+}
+
+// TestCloseWithoutWs confirms Close is safe on a Session that never got a
+// WebSocket (e.g. constructed for unit tests).
+func TestCloseWithoutWs(t *testing.T) {
+	s := &Session{remote: "test"}
+	s.Close()
 }
 
 // TestNewDefaultsNewVideo confirms New supplies video.New when Config.NewVideo

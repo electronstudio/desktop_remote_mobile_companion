@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -11,6 +12,7 @@ import (
 	"embed"
 	"encoding/hex"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"html"
 	"io/fs"
@@ -23,6 +25,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/alexflint/go-arg"
@@ -119,7 +122,39 @@ var (
 	_ input.Activator      = (tablet.Device)(nil)
 )
 
-func Run(cli CLI) {
+// Server is one lifecycle of the inara server: construct it with New, serve
+// with Run (which blocks), and stop it with Shutdown from another goroutine
+// (a signal handler or the GUI Stop button). A Server is single-use: after
+// Shutdown it cannot be restarted; construct a fresh one with New instead.
+type Server struct {
+	cli         CLI
+	httpServer  *http.Server
+	certDir     string
+	fingerprint string
+	pad         trackpad.Device
+	tablet      tablet.Device
+
+	// sessions tracks the active signaling sessions so Shutdown can close
+	// them explicitly: http.Server.Shutdown neither closes nor waits for
+	// hijacked connections such as WebSockets. Closing a session makes its
+	// Run loop return, which runs its defer chain (device state reset, video
+	// pipeline stop -> clean avformat_close_input of the FFmpeg capture,
+	// peer connection close). Killing the process mid-capture instead of
+	// running this chain can crash the Wayland compositor.
+	sessionsMu   sync.Mutex
+	sessions     map[*signaling.Session]struct{}
+	sessionsWG   sync.WaitGroup
+	shuttingDown bool
+
+	shutdownOnce sync.Once
+	shutdownErr  error
+}
+
+// New builds a ready-to-serve Server: certificates, virtual input devices,
+// HTTP handlers, and the startup capability checks. It does not listen yet;
+// call Run for that. Setup errors are returned rather than exiting so
+// callers (e.g. the GUI) can report them and stay alive.
+func New(cli CLI) (*Server, error) {
 	listenAddr := fmt.Sprintf(":%d", cli.Port)
 	versionStr := strings.TrimSpace(version)
 
@@ -144,14 +179,14 @@ func Run(cli CLI) {
 
 	certDir, err := certDirectory()
 	if err != nil {
-		log.Fatalf("certificate directory failed: %v", err)
+		return nil, fmt.Errorf("certificate directory failed: %w", err)
 	}
 	certPath := filepath.Join(certDir, "server.crt")
 	keyPath := filepath.Join(certDir, "server.key")
 
 	cert, fingerprint, err := loadOrGenerateCert(certPath, keyPath)
 	if err != nil {
-		log.Fatalf("certificate setup failed: %v", err)
+		return nil, fmt.Errorf("certificate setup failed: %w", err)
 	}
 
 	pad, err := trackpad.New()
@@ -162,7 +197,6 @@ func Run(cli CLI) {
 		color.Unset()
 		reExecWithSudo(cli)
 	}
-	defer pad.Close()
 
 	tabletDev, err := tablet.New(!cli.DontGrabMouse)
 	if err != nil {
@@ -172,16 +206,25 @@ func Run(cli CLI) {
 		color.Unset()
 		reExecWithSudo(cli)
 	}
-	defer tabletDev.Close()
+
+	// The Server struct exists before the handlers below so the /signal
+	// closure can register sessions in it; the remaining fields are filled
+	// in at the end of New.
+	s := &Server{
+		cli:      cli,
+		pad:      pad,
+		tablet:   tabletDev,
+		sessions: make(map[*signaling.Session]struct{}),
+	}
 
 	staticSub, err := fs.Sub(staticFS, "static")
 	if err != nil {
-		log.Fatalf("static filesystem failed: %v", err)
+		return nil, fmt.Errorf("static filesystem failed: %w", err)
 	}
 
 	indexBytes, err := staticFS.ReadFile("static/index.html")
 	if err != nil {
-		log.Fatalf("failed to read embedded index.html: %v", err)
+		return nil, fmt.Errorf("failed to read embedded index.html: %w", err)
 	}
 	// The page title shows the machine hostname so a user with several
 	// servers can tell their browser tabs / installed web apps apart.
@@ -215,7 +258,11 @@ func Run(cli CLI) {
 		"tablet":   tabletDev,
 	}
 
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+	// A dedicated mux instead of http.DefaultServeMux: a Server is single-use
+	// and the GUI may construct several over the app's lifetime, and double
+	// registration on the default mux would panic.
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/" || r.URL.Path == "/index.html" {
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
@@ -227,8 +274,8 @@ func Run(cli CLI) {
 	// /auth answers passcode-status queries (GET) and passcode login (POST).
 	// It is registered unconditionally: with no passcode configured it simply
 	// reports required=false, keeping the client logic uniform.
-	http.Handle("/auth", auth)
-	http.HandleFunc("/signal", func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("/auth", auth)
+	mux.HandleFunc("/signal", func(w http.ResponseWriter, r *http.Request) {
 		// The browser attaches the session cookie to the WebSocket handshake
 		// automatically. Gating the handshake here also gates the WebRTC data
 		// channel, because no peer connection can be established without
@@ -243,13 +290,21 @@ func Run(cli CLI) {
 			log.Printf("websocket upgrade failed: %v", err)
 			return
 		}
-		if err := signaling.New(signaling.Config{
+		sess := signaling.New(signaling.Config{
 			WS:           ws,
 			Remote:       r.RemoteAddr,
 			Processors:   processors,
 			VideoEnabled: videoEnabled,
 			VideoConfig:  videoCfg,
-		}).Run(); err != nil {
+		})
+		if !s.addSession(sess) {
+			// Shutting down: reject the connection instead of starting a new
+			// session that Shutdown has already walked past.
+			ws.Close()
+			return
+		}
+		defer s.removeSession(sess)
+		if err := sess.Run(); err != nil {
 			log.Printf("%v", err)
 		}
 	})
@@ -334,24 +389,121 @@ func Run(cli CLI) {
 	//	log.Printf("unable to drop sudo privileges: %v\n", err)
 	//}
 
-	log.Printf("HTTPS listening on https://localhost%s", listenAddr)
-	log.Printf(" certificate stored in %s", certDir)
-	log.Printf(" certificate SHA-256 fingerprint: %s", fingerprint)
-
-	for _, ip := range LocalIPs(true) {
-		s := fmt.Sprintf("https://%s:%d", ip, cli.Port)
-		log.Printf(" also reachable at %s", s)
-
-		qrterminal.GenerateHalfBlock(s, qrterminal.L, os.Stdout)
-	}
-
-	server := &http.Server{
-		Addr: listenAddr,
+	s.certDir = certDir
+	s.fingerprint = fingerprint
+	s.httpServer = &http.Server{
+		Addr:    listenAddr,
+		Handler: mux,
 		TLSConfig: &tls.Config{
 			Certificates: []tls.Certificate{cert},
 		},
 	}
-	log.Fatal(server.ListenAndServeTLS("", ""))
+	return s, nil
+}
+
+// Run serves HTTPS on the address and certificate prepared by New. It blocks
+// until the listener fails or Shutdown is called: a shutdown-induced stop
+// returns nil, a listener failure returns the error. Call it at most once.
+func (s *Server) Run() error {
+	log.Printf("HTTPS listening on https://localhost%s", s.httpServer.Addr)
+	log.Printf(" certificate stored in %s", s.certDir)
+	log.Printf(" certificate SHA-256 fingerprint: %s", s.fingerprint)
+
+	for _, ip := range LocalIPs(true) {
+		url := fmt.Sprintf("https://%s:%d", ip, s.cli.Port)
+		log.Printf(" also reachable at %s", url)
+
+		qrterminal.GenerateHalfBlock(url, qrterminal.L, os.Stdout)
+	}
+
+	if err := s.httpServer.ListenAndServeTLS("", ""); errors.Is(err, http.ErrServerClosed) {
+		return nil
+	} else {
+		return err
+	}
+}
+
+// Shutdown gracefully stops the server. The order matters: first every active
+// signaling session is closed so each session's defer chain stops its video
+// capture pipeline (a clean avformat_close_input of the FFmpeg kmsgrab input
+// -- tearing the process down mid-capture can crash the Wayland compositor),
+// then the HTTP server is shut down, then the virtual input devices are
+// closed. It is idempotent and safe to call concurrently; later calls wait
+// for the first to finish and return its error. If ctx has no deadline, a
+// 5-second cap keeps a stuck session or capture from hanging the process.
+func (s *Server) Shutdown(ctx context.Context) error {
+	s.shutdownOnce.Do(func() {
+		log.Printf("shutting down gracefully")
+
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		if _, ok := ctx.Deadline(); !ok {
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithTimeout(ctx, 5*time.Second)
+			defer cancel()
+		}
+
+		s.sessionsMu.Lock()
+		s.shuttingDown = true
+		sessions := make([]*signaling.Session, 0, len(s.sessions))
+		for sess := range s.sessions {
+			sessions = append(sessions, sess)
+		}
+		s.sessionsMu.Unlock()
+
+		for _, sess := range sessions {
+			sess.Close()
+		}
+
+		waitDone := make(chan struct{})
+		go func() { s.sessionsWG.Wait(); close(waitDone) }()
+		select {
+		case <-waitDone:
+		case <-ctx.Done():
+			log.Printf("shutdown: timed out waiting for %d session(s) to close", len(sessions))
+		}
+
+		if err := s.httpServer.Shutdown(ctx); err != nil {
+			// The context may already be spent waiting on sessions; if the
+			// listener stays open Run never unblocks and the process cannot
+			// exit, so force-close: the long-lived (hijacked) connections
+			// were already handled above.
+			log.Printf("shutdown: %v; forcing listener close", err)
+			s.httpServer.Close()
+		}
+		if s.pad != nil {
+			s.pad.Close()
+		}
+		if s.tablet != nil {
+			s.tablet.Close()
+		}
+	})
+	return s.shutdownErr
+}
+
+// addSession registers a new signaling session in the shutdown registry. It
+// returns false when the server is shutting down, in which case the caller
+// must reject the connection (the session is not registered and the WaitGroup
+// is untouched). The registry lets Shutdown close hijacked WebSocket
+// connections itself, which http.Server.Shutdown does not do.
+func (s *Server) addSession(sess *signaling.Session) bool {
+	s.sessionsMu.Lock()
+	defer s.sessionsMu.Unlock()
+	if s.shuttingDown {
+		return false
+	}
+	s.sessions[sess] = struct{}{}
+	s.sessionsWG.Add(1)
+	return true
+}
+
+// removeSession unregisters a session whose Run has returned.
+func (s *Server) removeSession(sess *signaling.Session) {
+	s.sessionsMu.Lock()
+	delete(s.sessions, sess)
+	s.sessionsMu.Unlock()
+	s.sessionsWG.Done()
 }
 
 func certDirectory() (string, error) {

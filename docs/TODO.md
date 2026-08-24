@@ -17,6 +17,19 @@ check what happens when certificate expires
 
 ## Maybe
 
+- Concurrent-client policy. Every `/signal` WebSocket is currently allowed
+  (the server session registry exists only for graceful shutdown). All
+  sessions share the two virtual input devices -- simultaneous touches from
+  two phones interleave into one device, and one client disconnecting resets
+  (lifts) state the other may be using; video is exclusive to the first
+  capture pipeline and fails open for later ones. Even a single client page
+  reload can race: if the new offer arrives before the old pipeline finishes
+  stopping, the new session's `video.New` fails open (no video until the
+  next reconnect). Options, now easy to build on the registry:
+  (a) reject a second concurrent `/signal` with 409, or
+  (b) "take over": a new `/signal` cleanly closes the existing session(s),
+  which fixes both the multi-phone confusion and the reload race.
+
 - Multi-client fan-out: a single shared capture pipeline distributing H264
   samples to N peer connections (kmsgrab is exclusive today, so only one phone
   at a time gets video?).

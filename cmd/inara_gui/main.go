@@ -6,15 +6,16 @@ package main
 //
 //     go build -tags migrated_fynedo -o inara_gui ./cmd/inara_gui
 //
-// This is safe because the server (started by the Start button) runs in its
-// own goroutine and never calls any Fyne API; all Fyne calls happen on the
-// main/app goroutine.
+// This is safe because the server (started/stopped by the Start/Stop
+// button) runs in its own goroutine and never calls any Fyne API; all Fyne
+// calls happen on the main/app goroutine.
 //
 // Everything written through the standard log package (log.Printf etc.) from
 // any package (server, signaling, video, ...) is mirrored into the read-only
 // text area at the bottom of the window, in addition to the terminal.
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"log"
@@ -27,6 +28,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
@@ -270,20 +272,62 @@ func main() {
 	qrContainer := container.NewVBox()
 	ipLabel := widget.NewLabelWithStyle("", fyne.TextAlignCenter, fyne.TextStyle{Bold: true})
 
+	// srv is the running server, nil while stopped. It is only touched on the
+	// Fyne main thread (the button callback and fyne.Do closures), so it needs
+	// no lock.
+	var srv *server.Server
+
+	// setConfigEnabled toggles the configuration widgets while the server
+	// runs: the running server has already captured cli, so edits would have
+	// no effect and suggest otherwise. Widgets that are meaningless on Windows
+	// stay disabled there.
+	setConfigEnabled := func(enabled bool) {
+		set := func(w fyne.Disableable) {
+			if enabled {
+				w.Enable()
+			} else {
+				w.Disable()
+			}
+		}
+		set(portEntry)
+		set(passcodeEntry)
+		set(videoEncoderSelect)
+		set(videoFpsEntry)
+		if runtime.GOOS != "windows" {
+			set(videoSourceSelect)
+			set(videoCardSelect)
+			set(intelFastCheck)
+			set(dontGrabCheck)
+		}
+	}
+
 	start := widget.NewButton("Start", nil)
 	start.OnTapped = func() {
-		start.Disable()
-		start.SetText("Running…")
-		// Disable the config widgets: the running server has already captured
-		// cli, so further edits would have no effect and suggest otherwise.
-		portEntry.Disable()
-		passcodeEntry.Disable()
-		videoSourceSelect.Disable()
-		videoEncoderSelect.Disable()
-		videoCardSelect.Disable()
-		videoFpsEntry.Disable()
-		intelFastCheck.Disable()
-		dontGrabCheck.Disable()
+		if srv != nil {
+			// Stop: shut the server down in the background so the window stays
+			// responsive. When s.Run returns (below), the UI is reset so the
+			// server can be started again.
+			s := srv
+			start.Disable()
+			start.SetText("Stopping…")
+			go func() {
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				if err := s.Shutdown(ctx); err != nil {
+					log.Printf("server shutdown: %v", err)
+				}
+			}()
+			return
+		}
+
+		s, err := server.New(cli)
+		if err != nil {
+			log.Printf("server setup failed: %v", err)
+			return
+		}
+		srv = s
+		start.SetText("Stop")
+		setConfigEnabled(false)
 
 		ips := server.LocalIPs(true)
 		bestIp := ips[0]
@@ -293,29 +337,36 @@ func main() {
 				break
 			}
 		}
-		s := fmt.Sprintf("https://%s:%d", bestIp, cli.Port)
+		u := fmt.Sprintf("https://%s:%d", bestIp, cli.Port)
 
-		ipLabel.SetText("Server address: " + s)
+		ipLabel.SetText("Server address: " + u)
 
-		qr, err := go_qr.EncodeText(s, go_qr.Low)
-		if err != nil {
-			return
+		if qr, err := go_qr.EncodeText(u, go_qr.Low); err != nil {
+			log.Printf("QR code generation failed: %v", err)
+		} else if i, err := qr.ToImage(go_qr.NewQrCodeImgConfig(12, 4) /* scale=12px, border=4 modules */); err != nil {
+			log.Printf("QR code rendering failed: %v", err)
+		} else {
+			qrCode := canvas.NewImageFromImage(i)
+			qrCode.FillMode = canvas.ImageFillOriginal
+			qrContainer.RemoveAll()
+			qrContainer.Add(qrCode)
 		}
-
-		config := go_qr.NewQrCodeImgConfig(12, 4) // scale=10px, border=4 modules
-		i, err := qr.ToImage(config)
-		if err != nil {
-			return
-		}
-
-		qrCode := canvas.NewImageFromImage(i)
-		qrCode.FillMode = canvas.ImageFillOriginal
-		qrContainer.Add(qrCode)
 
 		// Run the server in the background so the window stays responsive.
-		// The server blocks forever (ListenAndServeTLS); it has no stop path,
-		// so closing the window exits the whole process (see SetOnClosed).
-		go server.Run(cli)
+		// When it exits (Stop button pressed or a listener error) reset the UI
+		// so the server can be started again with fresh settings.
+		go func() {
+			err := s.Run()
+			fyne.Do(func() {
+				if err != nil {
+					log.Printf("server exited: %v", err)
+				}
+				srv = nil
+				setConfigEnabled(true)
+				start.SetText("Start")
+				start.Enable()
+			})
+		}()
 	}
 
 	fixPermissions := widget.NewButton("Fix permissions", nil)
@@ -328,6 +379,13 @@ func main() {
 		fmt.Printf("Fixing permissions: %s\n", executable)
 		cmd := exec.Command("pkexec", "/sbin/setcap", "cap_sys_admin,cap_dac_override,cap_setpcap=p", executable)
 		_ = cmd.Run()
+		// Shut the server down gracefully before exiting (as on window close);
+		// exiting abruptly mid-capture is exactly what we want to avoid.
+		if srv != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			srv.Shutdown(ctx)
+		}
 		os.Exit(0)
 	}
 
@@ -344,8 +402,19 @@ func main() {
 	w.SetContent(container.NewBorder(top, nil, nil, nil, logs.scroll))
 	w.Resize(fyne.NewSize(400, 800))
 
-	// Closing the window exits the process, killing the server goroutine.
-	w.SetOnClosed(func() { os.Exit(0) })
+	// Closing the window shuts the server down gracefully first: each active
+	// session's FFmpeg capture pipeline closes cleanly instead of the process
+	// dying mid-capture, which can crash the Wayland compositor.
+	w.SetOnClosed(func() {
+		if srv != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := srv.Shutdown(ctx); err != nil {
+				log.Printf("server shutdown: %v", err)
+			}
+		}
+		os.Exit(0)
+	})
 
 	w.ShowAndRun()
 }

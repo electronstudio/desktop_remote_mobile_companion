@@ -132,6 +132,19 @@ func (s *Session) Run() error {
 	return nil
 }
 
+// Close terminates the session by closing the WebSocket: the blocked
+// ReadMessage in runLoop returns an error, Run's defer chain runs (device
+// state reset, video pipeline stop, peer connection close) and Run returns.
+// It is safe to call multiple times and from any goroutine; a second close
+// of the WebSocket returns an error which is ignored here. It is used by
+// server shutdown, which must close hijacked WebSocket connections itself
+// because http.Server.Shutdown does not.
+func (s *Session) Close() {
+	if s.ws != nil {
+		s.ws.Close()
+	}
+}
+
 // runLoop reads signaling messages until the WebSocket closes or errors. The
 // offer path is delegated to handleOffer (which returns a wrapped, staged
 // error so a single log line names the failing step); candidates and unknown

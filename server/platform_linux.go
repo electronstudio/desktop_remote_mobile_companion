@@ -193,3 +193,10 @@ func reExecWithSudo(cli CLI) {
 	}
 	os.Exit(0)
 }
+
+// InterruptSignals returns the process signals that should trigger a graceful
+// shutdown (Ctrl-C and SIGTERM). Kept per-platform because syscall.SIGTERM
+// does not exist on Windows.
+func InterruptSignals() []os.Signal {
+	return []os.Signal{os.Interrupt, syscall.SIGTERM}
+}
