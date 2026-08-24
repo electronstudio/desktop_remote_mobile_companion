@@ -28,11 +28,49 @@
     });
   }
 
-  document.querySelectorAll('.log-version').forEach(el => {
+  document.querySelectorAll('.log-version-text').forEach(el => {
     if (window.APP_VERSION) {
       el.textContent = 'v' + window.APP_VERSION;
     }
   });
+
+  // --- Fullscreen toggle -------------------------------------------------
+  // A button in each log panel header toggles fullscreen. This is the only
+  // way to hide the browser chrome on a page that is not installed as a
+  // PWA: requestFullscreen requires a user gesture (always satisfied here,
+  // as it runs from a click), and on Android it also hides the status and
+  // nav bars. iPadOS Safari 16.4+ supports it but needs the webkit prefix.
+  function syncFullscreenButtons() {
+    const fs = !!(document.fullscreenElement || document.webkitFullscreenElement);
+    document.querySelectorAll('.fullscreen-btn').forEach(btn => {
+      btn.classList.toggle('is-fullscreen', fs);
+    });
+  }
+
+  document.querySelectorAll('.fullscreen-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const docEl = document.documentElement;
+      try {
+        if (document.fullscreenElement || document.webkitFullscreenElement) {
+          const exit = document.exitFullscreen || document.webkitExitFullscreen;
+          if (exit) await exit.call(document);
+        } else {
+          const req = docEl.requestFullscreen || docEl.webkitRequestFullscreen;
+          if (!req) {
+            log('Fullscreen is not supported by this browser', 'err');
+            return;
+          }
+          await req.call(docEl);
+        }
+      } catch (err) {
+        log('Fullscreen request failed: ' + err.message, 'err');
+      }
+    });
+  });
+
+  document.addEventListener('fullscreenchange', syncFullscreenButtons);
+  document.addEventListener('webkitfullscreenchange', syncFullscreenButtons);
+  syncFullscreenButtons();
 
   function sendPointerSample(type, e, device, surface) {
     if (!conn.channel || conn.channel.readyState !== 'open') return;
@@ -788,6 +826,8 @@
   splitter.addEventListener('pointercancel', endSplit, { passive: false });
   splitter.addEventListener('contextmenu', e => e.preventDefault());
 
+  // Entering/leaving fullscreen changes the viewport size, which fires
+  // resize (handled by updateLayout below); no separate handling needed.
   window.addEventListener('orientationchange', updateLayout);
   if (window.screen && window.screen.orientation && window.screen.orientation.addEventListener) {
     window.screen.orientation.addEventListener('change', updateLayout);

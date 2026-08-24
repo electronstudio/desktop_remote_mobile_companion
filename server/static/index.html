@@ -212,7 +212,34 @@
       border-bottom: 1px solid #444;
       color: #888;
       flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.5rem;
     }
+    .fullscreen-btn {
+      background: transparent;
+      border: 1px solid #555;
+      border-radius: 4px;
+      color: #aaa;
+      padding: 4px 6px;
+      cursor: pointer;
+      touch-action: manipulation;
+    }
+    .fullscreen-btn:active { background: #2a2a2a; }
+    .fullscreen-btn svg {
+      display: block;
+      width: 14px;
+      height: 14px;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+    .fullscreen-btn .icon-exit { display: none; }
+    .fullscreen-btn.is-fullscreen .icon-enter { display: none; }
+    .fullscreen-btn.is-fullscreen .icon-exit { display: block; }
     .log-content {
       flex: 1;
       padding: 0.5rem;
@@ -286,7 +313,13 @@
         </div>
       </div>
       <div class="panel log-panel" data-panel="log">
-        <div class="log-version">v{{VERSION}}</div>
+        <div class="log-version">
+          <span class="log-version-text">v{{VERSION}}</span>
+          <button type="button" class="fullscreen-btn" title="Toggle fullscreen" aria-label="Toggle fullscreen">
+            <svg class="icon-enter" viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>
+            <svg class="icon-exit" viewBox="0 0 24 24"><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/></svg>
+          </button>
+        </div>
         <div class="log-content">Connecting...</div>
       </div>
     </div>
@@ -310,7 +343,13 @@
         </div>
       </div>
       <div class="panel log-panel" data-panel="log">
-        <div class="log-version">v{{VERSION}}</div>
+        <div class="log-version">
+          <span class="log-version-text">v{{VERSION}}</span>
+          <button type="button" class="fullscreen-btn" title="Toggle fullscreen" aria-label="Toggle fullscreen">
+            <svg class="icon-enter" viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>
+            <svg class="icon-exit" viewBox="0 0 24 24"><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/></svg>
+          </button>
+        </div>
         <div class="log-content">Connecting...</div>
       </div>
     </div>
