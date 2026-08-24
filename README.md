@@ -45,17 +45,41 @@ Inara simulates other devices besides just a graphics tablet.
 
 ## Install
 
-### Linux
+Download latest packages from [releases](https://github.com/electronstudio/desktop_remote_mobile_companion/releases).
+(May be newer than links below.)
 
-Download a package from [releases](https://github.com/electronstudio/desktop_remote_mobile_companion/releases).  To install the deb package on Debian/Ubuntu:
+### Windows
+
+Download zip file and unzip.
+
+### Ubuntu, Debian, Mint
+
+Download the deb package, then install:
 
     cd ~/Downloads
     sudo apt install ./inara*.deb
 
-On Intel GPU systems the full Intel drivers are required, e.g. install them on Debian with:
+### Arch, CachyOS
+
+Install from AUR, e.g.:
+
+	paru -S inara --noconfirm
+
+### Other Linux
+
+Download the static binary tarball and untar.
+
+OR
+
+Use the static binary installer:
+
+
+### Note
+
+On Intel GPU systems the full Intel drivers are required.  Install them with:
 
     sudo apt install intel-media-va-driver-non-free
-
+    
 If your OS firewall blocks connections by default (e.g. CachyOS) you will need to open a port, e.g.:
 
     sudo ufw allow 8080
@@ -65,7 +89,7 @@ If your OS firewall blocks connections by default (e.g. CachyOS) you will need t
 For the GUI version, run:
 
 ```bash
-./inara_gui
+inara_gui
 ```
 
 If you installed a Linux package, it will appear on your start menu.  On Windows there is no installer, you just
