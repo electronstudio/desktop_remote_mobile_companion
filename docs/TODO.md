@@ -15,6 +15,36 @@ check what happens when certificate expires
 - HTTPS is required because WebRTC APIs need a secure browser context; plain HTTP on a LAN IP is blocked.
 
 
+## Device registration failure (nil virtual devices)
+
+Root cause of a reported segfault (`signaling.(*Session).handleDataMessage`
+nil pointer dereference, followed by `Failed to execute with sudo: exit
+status 2`): when `trackpad.New()`/`tablet.New()` fails, `server.New` calls
+`reExecWithSudo`, which is a no-op when `cli.DontRunSudo` is set -- i.e. in
+the sudo-re-exec'd child itself, and in the GUI (`cmd/inara_gui` sets it
+unconditionally). Startup then continues with a nil device interface in the
+session route map. A defensive nil guard in `handleDataMessage` now prevents
+the crash (events are logged and dropped), but the underlying handling is
+still open:
+
+- Fail fast on device-creation failure: when `reExecWithSudo` cannot help
+  (`--dont-run-sudo` child or GUI), `server.New` should return an error /
+  exit instead of serving with nil devices. The nil devices can still reach
+  other unguarded paths: `resetProcessors` calls `Reset()` on every
+  processor, and `Shutdown` calls `Close()` on `s.pad`/`s.tablet`.
+- Better diagnostics at registration failure: if running as root and opening
+  `/dev/uinput` fails with ENOENT, the uinput kernel module is not loaded --
+  print actionable advice (`sudo modprobe uinput`; persist via
+  `echo uinput | sudo tee /etc/modules-load.d/uinput.conf`; if the kernel
+  was just upgraded, reboot first -- the running kernel's module directory
+  is gone, so modprobe fails until reboot; this is the likely reason the
+  reported crash was "fixed by a reboot").
+- Optionally, when registration fails and we are already root, attempt
+  `modprobe uinput` automatically before giving up.
+- Optionally, degraded operation instead of fail-fast: build the processors
+  map only from successfully created devices and surface "device X disabled"
+  in the web UI status (less attractive -- both devices are core features).
+
 ## Maybe
 
 - Concurrent-client policy. Every `/signal` WebSocket is currently allowed

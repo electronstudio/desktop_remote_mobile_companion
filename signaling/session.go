@@ -272,6 +272,14 @@ func (s *Session) handleDataMessage(data []byte) {
 		log.Printf("unknown device %q from %s", ev.Device, s.remote)
 		return
 	}
+	// A device whose registration failed at startup (e.g. /dev/uinput was
+	// unavailable) leaves a nil interface in the route map; without this
+	// guard the method calls below would jump through a nil itab and
+	// segfault the whole process.
+	if proc == nil {
+		log.Printf("device %q unavailable for %s: virtual device registration failed at startup", ev.Device, s.remote)
+		return
+	}
 
 	if ev.Type == "activate" {
 		if act, ok := proc.(input.Activator); ok {

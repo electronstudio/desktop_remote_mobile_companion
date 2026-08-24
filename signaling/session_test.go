@@ -173,6 +173,20 @@ func TestHandleDataMessageRouting(t *testing.T) {
 	}
 }
 
+// TestHandleDataMessageNilProcessor reproduces the reported segfault: a
+// device whose registration failed at startup leaves a nil interface in the
+// route map, and the first event routed to it must be logged and dropped,
+// not jump through a nil itab and crash the process.
+func TestHandleDataMessageNilProcessor(t *testing.T) {
+	s := &Session{
+		remote:     "test",
+		processors: map[string]input.EventProcessor{"trackpad": nil},
+	}
+	// pointer event and activate on the nil device: no panic.
+	s.handleDataMessage([]byte(`{"device":"trackpad","type":"pointermove","w":1,"h":1,"t":[{"id":1,"x":0.5,"y":0.5}]}`))
+	s.handleDataMessage([]byte(`{"device":"trackpad","type":"activate","active":true}`))
+}
+
 // TestMaybeAddVideoTrack covers the fail-open policy: every precondition
 // missing or construction step failing returns nil and leaves the connection
 // intact, while the happy path adds the track and stores the streamer.
