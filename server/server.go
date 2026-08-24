@@ -433,6 +433,7 @@ func (s *Server) Run() error {
 // 5-second cap keeps a stuck session or capture from hanging the process.
 func (s *Server) Shutdown(ctx context.Context) error {
 	s.shutdownOnce.Do(func() {
+		var errs []error
 		log.Printf("shutting down gracefully")
 
 		if ctx == nil {
@@ -462,6 +463,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		case <-waitDone:
 		case <-ctx.Done():
 			log.Printf("shutdown: timed out waiting for %d session(s) to close", len(sessions))
+			errs = append(errs, fmt.Errorf("timed out waiting for %d session(s) to close", len(sessions)))
 		}
 
 		if err := s.httpServer.Shutdown(ctx); err != nil {
@@ -470,14 +472,18 @@ func (s *Server) Shutdown(ctx context.Context) error {
 			// exit, so force-close: the long-lived (hijacked) connections
 			// were already handled above.
 			log.Printf("shutdown: %v; forcing listener close", err)
-			s.httpServer.Close()
+			errs = append(errs, err)
+			if cerr := s.httpServer.Close(); cerr != nil {
+				errs = append(errs, cerr)
+			}
 		}
 		if s.pad != nil {
-			s.pad.Close()
+			errs = append(errs, s.pad.Close())
 		}
 		if s.tablet != nil {
-			s.tablet.Close()
+			errs = append(errs, s.tablet.Close())
 		}
+		s.shutdownErr = errors.Join(errs...)
 	})
 	return s.shutdownErr
 }
