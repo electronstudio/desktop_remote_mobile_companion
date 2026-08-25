@@ -759,15 +759,13 @@
   let lastOrientation = null;
 
   function isLandscape() {
-    if (typeof window.orientation === 'number') {
-      return Math.abs(window.orientation) === 90;
-    }
-    if (window.screen && window.screen.orientation && window.screen.orientation.angle != null) {
-      return Math.abs(window.screen.orientation.angle) === 90;
-    }
-    // Fallback when no orientation API is available (or reports a stale
-    // value during the rotation transition): compare the actual viewport
-    // dimensions. At resize-event time these are settled and reliable.
+    // Purely geometric, based on the viewport the layout actually sits in.
+    // window.orientation / screen.orientation.angle report the rotation
+    // RELATIVE to the device's natural orientation, so on devices (or AVDs)
+    // whose natural orientation is landscape they return 0 for landscape
+    // and +-90 for portrait, inverting an angle == 90 test. window.orientation
+    // is also deprecated, and the two APIs disagree on sign across browsers.
+    // The viewport dimensions are unambiguous and settled by resize time.
     return window.innerWidth > window.innerHeight;
   }
 
@@ -861,9 +859,19 @@
 
   // Entering/leaving fullscreen changes the viewport size, which fires
   // resize (handled by updateLayout below); no separate handling needed.
-  window.addEventListener('orientationchange', updateLayout);
+  // updateLayoutSettled fires updateLayout immediately and again after a
+  // short delay: while a rotation animation is in flight, viewport values
+  // (innerWidth/innerHeight) can still be pre-settlement, so a second pass
+  // fixes up the layout once they have. The resize listener below is the
+  // primary trigger; these two cover engines that surface the orientation
+  // change without a (settled) resize.
+  function updateLayoutSettled() {
+    updateLayout();
+    setTimeout(updateLayout, 300);
+  }
+  window.addEventListener('orientationchange', updateLayoutSettled);
   if (window.screen && window.screen.orientation && window.screen.orientation.addEventListener) {
-    window.screen.orientation.addEventListener('change', updateLayout);
+    window.screen.orientation.addEventListener('change', updateLayoutSettled);
   }
   // resize always fires after a rotation (even when orientationchange does
   // not, or fires before the viewport dimensions have settled), so it is
