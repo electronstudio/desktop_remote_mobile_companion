@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -43,6 +44,8 @@ var upgrader = websocket.Upgrader{
 
 type CLI struct {
 	Port int `arg:"-p,--port" default:"8080" help:"HTTPS listen port"`
+
+	ListenAddress string `arg:"--listen-address" default:"" help:"IP address for the HTTP server to listen on; empty listens on all interfaces (the default)"`
 
 	VideoSource    string `arg:"--video-source" default:"kmsgrab" help:"desktop video capture source: \"kmsgrab\" (DRM, default), \"x11grab\" (X server), or \"none\" to disable video; ignored on Windows, where the source is always ddagrab"`
 	VideoEncoder   string `arg:"--video-encoder" default:"auto" help:"video H264 encoder (choices listed below)"`
@@ -148,6 +151,12 @@ type Server struct {
 // callers (e.g. the GUI) can report them and stay alive.
 func New(cli CLI) (*Server, error) {
 	listenAddr := fmt.Sprintf(":%d", cli.Port)
+	if cli.ListenAddress != "" {
+		// JoinHostPort brackets IPv6 addresses; an empty address keeps the
+		// previous ":port" form, which makes net/http listen on all
+		// interfaces exactly as before.
+		listenAddr = net.JoinHostPort(cli.ListenAddress, strconv.Itoa(cli.Port))
+	}
 	versionStr := strings.TrimSpace(version)
 
 	if err := toast.Init(nil); err != nil {
@@ -428,14 +437,28 @@ func New(cli CLI) (*Server, error) {
 // until the listener fails or Shutdown is called: a shutdown-induced stop
 // returns nil, a listener failure returns the error. Call it at most once.
 func (s *Server) Run() error {
-	log.Printf("HTTPS listening on https://localhost%s", s.httpServer.Addr)
+	if s.cli.ListenAddress != "" {
+		log.Printf("HTTPS listening on https://%s:%d", s.cli.ListenAddress, s.cli.Port)
+	} else {
+		log.Printf("HTTPS listening on https://localhost%s", s.httpServer.Addr)
+	}
 	log.Printf(" certificates stored in %s", s.certDir)
 	log.Printf(" CA certificate SHA-256 fingerprint: %s", s.caFingerprint)
 	log.Printf(" install the CA on client devices from /ca.crt to remove the certificate warning")
 
-	for _, ip := range LocalIPs(true) {
+	ips := LocalIPs(true)
+	if s.cli.ListenAddress != "" {
+		// Bound to a single address: advertising the other interface IPs
+		// would be misleading.
+		ips = []string{s.cli.ListenAddress}
+	}
+	for _, ip := range ips {
 		url := fmt.Sprintf("https://%s:%d", ip, s.cli.Port)
-		log.Printf(" also reachable at %s", url)
+		if s.cli.ListenAddress == "" {
+			log.Printf(" also reachable at %s", url)
+		} else {
+			log.Printf(" reachable at %s", url)
+		}
 
 		qrterminal.GenerateHalfBlock(url, qrterminal.L, os.Stdout)
 	}

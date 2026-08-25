@@ -90,6 +90,7 @@ Command-line flags are handled by `github.com/alexflint/go-arg`.
 | Flag | Default | Description |
 |---|---|---|
 | `-p`, `--port` | `8080` | HTTPS listen port |
+| `--listen-address` | (empty) | IP address for the HTTP server to listen on; empty listens on all interfaces (the Go `http.Server` default). When set, the server only advertises this address and the GUI QR code/address label use it |
 | `--video-source` | `kmsgrab` | Desktop video capture source: `kmsgrab` (DRM framebuffer), `x11grab` (X server), or `none` to disable video. On Windows the source is always `ddagrab` regardless of this flag |
 | `--video-encoder` | `auto` | Video H264 encoder: `vaapi`, `nvenc`, `libx264`, or `auto` (Linux auto = nvenc on NVIDIA, else vaapi, else libx264; Windows auto = `mf`). On Windows `amf` and `mf` are also accepted. `libx264` is only used when manually specified or as a last-resort fallback |
 | `--video-card` | (auto) | DRM card to capture (e.g. `/dev/dri/card1`); empty auto-detects the first `/dev/dri/card*` (kmsgrab only) |

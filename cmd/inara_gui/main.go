@@ -168,6 +168,18 @@ func main() {
 		// half-typed value cannot break the server start.
 	}
 
+	// Listen address entry: empty (the default) makes the server listen on
+	// all interfaces, exactly as before; a non-empty value binds it to that
+	// single IP and is also used for the QR code / address label below.
+	listenAddressEntry := widget.NewEntry()
+	listenAddressEntry.SetPlaceHolder("all interfaces")
+	if cli.ListenAddress != "" {
+		listenAddressEntry.SetText(cli.ListenAddress)
+	}
+	listenAddressEntry.OnChanged = func(s string) {
+		cli.ListenAddress = strings.TrimSpace(s)
+	}
+
 	// Passcode entry: NewPasswordEntry masks the text as it is typed (with a
 	// reveal toggle). Prefilled from cli.Passcode, which CLIDefaults has
 	// already populated from $INARA_PASSCODE when set. Empty disables
@@ -262,6 +274,7 @@ func main() {
 
 	form := widget.NewForm(
 		widget.NewFormItem("Port", portEntry),
+		widget.NewFormItem("Listen address", listenAddressEntry),
 		widget.NewFormItem("Passcode", passcodeEntry),
 		widget.NewFormItem("Video source", videoSourceSelect),
 		widget.NewFormItem("Video encoder", videoEncoderSelect),
@@ -290,6 +303,7 @@ func main() {
 			}
 		}
 		set(portEntry)
+		set(listenAddressEntry)
 		set(passcodeEntry)
 		set(videoEncoderSelect)
 		set(videoFpsEntry)
@@ -329,15 +343,23 @@ func main() {
 		start.SetText("Stop")
 		setConfigEnabled(false)
 
-		ips := server.LocalIPs(true)
-		bestIp := ips[0]
-		for _, ip := range ips {
-			if strings.HasPrefix(ip, "192.168") {
-				bestIp = ip
-				break
+		// The QR code should point at the address clients can reach: when the
+		// server binds to a specific --listen-address that is the address;
+		// otherwise pick the most likely LAN IP as before.
+		u := ""
+		if cli.ListenAddress != "" {
+			u = fmt.Sprintf("https://%s:%d", cli.ListenAddress, cli.Port)
+		} else {
+			ips := server.LocalIPs(true)
+			bestIp := ips[0]
+			for _, ip := range ips {
+				if strings.HasPrefix(ip, "192.168") {
+					bestIp = ip
+					break
+				}
 			}
+			u = fmt.Sprintf("https://%s:%d", bestIp, cli.Port)
 		}
-		u := fmt.Sprintf("https://%s:%d", bestIp, cli.Port)
 
 		ipLabel.SetText("Server address: " + u)
 
@@ -397,9 +419,20 @@ func main() {
 	}
 
 	checks := container.NewHBox(intelFastCheck, dontGrabCheck)
-	top := container.NewVBox(form, checks, fixPermissions, start, ipLabel, qrContainer)
 
-	w.SetContent(container.NewBorder(top, nil, nil, nil, logs.scroll))
+	// Tabbed layout: the Server tab holds the run-time widgets (address, QR
+	// code, start/stop, permissions fix and the log view, which fills the
+	// remaining space); the Options tab holds the configuration widgets.
+	serverTop := container.NewVBox(ipLabel, qrContainer, start, fixPermissions)
+	serverTab := container.NewBorder(serverTop, nil, nil, nil, logs.scroll)
+	optionsTab := container.NewVBox(form, checks)
+
+	tabs := container.NewAppTabs(
+		container.NewTabItem("Server", serverTab),
+		container.NewTabItem("Options", optionsTab),
+	)
+
+	w.SetContent(tabs)
 	w.Resize(fyne.NewSize(400, 800))
 
 	// Closing the window shuts the server down gracefully first: each active
