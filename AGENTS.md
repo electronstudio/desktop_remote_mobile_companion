@@ -8,7 +8,9 @@ Always increment the minor version number sored in VERSION file before doing a b
 
 # Packaging
 
-`.github/workflows/build.yml` builds Linux (x86_64) and Windows artifacts and also produces a Debian/Ubuntu `.deb` in the `build-linux` job: the package tree mirrors `make install` (`inara` + `inara_gui` in `/usr/bin`, desktop file, hicolor icon, LICENSE as copyright), `Depends:` is generated with `dpkg-shlibdeps` (FFmpeg is statically linked), and `packaging/deb/postinst` applies the `setcap cap_sys_admin,cap_dac_override,cap_setpcap=p` grant to both binaries at install time (as the Makefile does). The control-file/postinst templates live in `packaging/deb/`. The `.deb` is uploaded as its own artifact and also copied uncompressed into the combined "all" artifact by the `combine` job.
+`.github/workflows/build.yml` builds Linux (x86_64) and Windows artifacts and also produces a Debian/Ubuntu `.deb` in the `build-linux` job: the package tree mirrors `make install` (`inara` + `inara_gui` in `/usr/bin`, desktop file, hicolor icon, LICENSE as copyright), `Depends:` is generated with `dpkg-shlibdeps` (FFmpeg is statically linked), and `packaging/deb/postinst` applies the `setcap cap_sys_admin,cap_dac_override,cap_setpcap=p` grant to both binaries at install time (as the Makefile does). The control-file/postinst templates live in `packaging/deb/`. The `.deb` is uploaded as its own artifact and also copied uncompressed into the combined “all” artifact by the `combine` job.
+
+`make install` also installs the systemd *user* unit `inara.service.in` (rendered to `/usr/lib/systemd/user/inara.service`, `ExecStart=@BINDIR@/inara`), which users enable with `systemctl --user enable inara` to run the server at every login; the `install.sh`/`uninstall.sh` scripts and the `.deb` tree in `build.yml` mirror this.
 
 ## Project overview
 

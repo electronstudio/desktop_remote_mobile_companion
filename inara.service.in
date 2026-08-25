@@ -1,0 +1,22 @@
+# systemd user service for the inara server.
+# Installed to /usr/lib/systemd/user/inara.service by `make install`.
+# Enable it to start the server automatically whenever you log in:
+#
+#     systemctl --user enable --now inara.service
+#
+# (To start the GUI at login instead of the headless server, use your
+# desktop environment's autostart mechanism for inara_gui, not this unit.)
+
+[Unit]
+Description=Inara - use your phone as a trackpad and graphics tablet for this PC
+Documentation=https://github.com/electronstudio/desktop_remote_mobile_companion
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=@BINDIR@/inara
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=default.target

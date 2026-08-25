@@ -135,7 +135,7 @@ jobs:
           mkdir -p "dist/$name"
           cp inara "dist/$name/"
           cp inara_gui "dist/$name/"
-          cp README.md LICENSE inara.desktop.in install.sh uninstall.sh server/static/icon-512.png "dist/$name/"
+          cp README.md LICENSE inara.desktop.in inara.service.in install.sh uninstall.sh server/static/icon-512.png "dist/$name/"
 
       - name: Upload
         uses: actions/upload-artifact@v7
@@ -167,9 +167,11 @@ jobs:
           # Data tree, mirroring `make install DESTDIR=... PREFIX=/usr`.
           install -Dm755 inara "${root}/usr/bin/inara"
           install -Dm755 inara_gui "${root}/usr/bin/inara_gui"
-          mkdir -p "${root}/usr/share/applications"
+          mkdir -p "${root}/usr/share/applications" "${root}/usr/lib/systemd/user"
           sed 's|@BINDIR@|/usr/bin|' inara.desktop.in \
             > "${root}/usr/share/applications/inara.desktop"
+          sed 's|@BINDIR@|/usr/bin|' inara.service.in \
+            > "${root}/usr/lib/systemd/user/inara.service"
           install -Dm644 server/static/icon-512.png \
             "${root}/usr/share/icons/hicolor/512x512/apps/inara.png"
           install -Dm644 LICENSE \

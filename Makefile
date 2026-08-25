@@ -2,6 +2,7 @@ PREFIX ?= /usr
 BINDIR := $(PREFIX)/bin
 APPDIR := $(PREFIX)/share/applications
 ICONDIR := $(PREFIX)/share/icons/hicolor
+SYSTEMDUSERDIR := $(PREFIX)/lib/systemd/user
 
 .PHONY: all install clean distclean
 
@@ -63,12 +64,15 @@ install: all
 	setcap cap_sys_admin,cap_dac_override,cap_setpcap=p  $(DESTDIR)$(BINDIR)/inara_gui
 	mkdir -p $(DESTDIR)$(APPDIR)
 	sed 's|@BINDIR@|$(BINDIR)|' inara.desktop.in > $(DESTDIR)$(APPDIR)/inara.desktop
+	mkdir -p $(DESTDIR)$(SYSTEMDUSERDIR)
+	sed 's|@BINDIR@|$(BINDIR)|' inara.service.in > $(DESTDIR)$(SYSTEMDUSERDIR)/inara.service
 	install -Dm644 server/static/icon-512.png  $(DESTDIR)$(ICONDIR)/512x512/apps/inara.png
 	gtk-update-icon-cache -f $(DESTDIR)$(ICONDIR) 2>/dev/null || true
 	update-desktop-database $(DESTDIR)$(APPDIR) 2>/dev/null || true
 
 uninstall:
 	rm -f $(DESTDIR)$(BINDIR)/inara $(DESTDIR)$(BINDIR)/inara_gui $(DESTDIR)$(APPDIR)/inara.desktop
+	rm -f $(DESTDIR)$(SYSTEMDUSERDIR)/inara.service
 	rm -f $(DESTDIR)$(ICONDIR)/512x512/apps/inara.png
 	gtk-update-icon-cache -f $(DESTDIR)$(ICONDIR) 2>/dev/null || true
 	update-desktop-database $(DESTDIR)$(APPDIR) 2>/dev/null || true
