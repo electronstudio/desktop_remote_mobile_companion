@@ -283,6 +283,20 @@ func New(cli CLI) (*Server, error) {
 			w.Write([]byte(indexHTML))
 			return
 		}
+		// These two always revalidate: sw.js is the file the browser fetches
+		// when checking a legacy service worker registration for updates, so
+		// it must reach the network deterministically (the current sw.js is
+		// a self-destruct that unregisters the stale-caching workers older
+		// app versions installed); manifest.json is a second, PWA-side
+		// entry point that installed web apps would otherwise pin
+		// indefinitely. The embedded FS serves files with no validators (no
+		// Last-Modified — embed files have zero modtimes), so without an
+		// explicit header browsers are left to heuristics. The remaining
+		// assets (app.js, icons) are cache-busted by their ?v= query and
+		// keep the fileServer default.
+		if r.URL.Path == "/sw.js" || r.URL.Path == "/manifest.json" {
+			w.Header().Set("Cache-Control", "no-cache")
+		}
 		fileServer.ServeHTTP(w, r)
 	})
 	// /auth answers passcode-status queries (GET) and passcode login (POST).
