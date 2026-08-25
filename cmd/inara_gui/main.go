@@ -410,24 +410,29 @@ func main() {
 		}()
 	}
 
-	fixPermissions := widget.NewButton("Fix permissions", nil)
+	fixPermissions := widget.NewButton("Fix permissions (restart)", nil)
+
 	fixPermissions.OnTapped = func() {
 		executable, err := os.Executable()
 		if err != nil {
 			fmt.Printf("Error determining executable path: %v\n", err)
-			os.Exit(1)
+			return
 		}
 		fmt.Printf("Fixing permissions: %s\n", executable)
-		cmd := exec.Command("pkexec", "/sbin/setcap", "cap_sys_admin,cap_dac_override,cap_setpcap=p", executable)
-		_ = cmd.Run()
-		// Shut the server down gracefully before exiting (as on window close);
-		// exiting abruptly mid-capture is exactly what we want to avoid.
-		if srv != nil {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			srv.Shutdown(ctx)
-		}
-		os.Exit(0)
+		go func() {
+			cmd := exec.Command("pkexec", "/sbin/setcap", "cap_sys_admin,cap_dac_override,cap_setpcap=p", executable)
+			err = cmd.Run()
+			if err == nil {
+				// Shut the server down gracefully before exiting (as on window close);
+				// exiting abruptly mid-capture is exactly what we want to avoid.
+				if srv != nil {
+					ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+					defer cancel()
+					srv.Shutdown(ctx)
+				}
+				os.Exit(0)
+			}
+		}()
 	}
 
 	// low-power is a h264_vaapi-only option; it has no effect on Windows.
@@ -442,7 +447,22 @@ func main() {
 	// Tabbed layout: the Server tab holds the run-time widgets (address, QR
 	// code, start/stop, permissions fix and the log view, which fills the
 	// remaining space); the Options tab holds the configuration widgets.
-	serverTop := container.NewVBox(ipLabel, qrContainer, start, fixPermissions)
+	serverTop := container.NewVBox(ipLabel, qrContainer, start)
+
+	if runtime.GOOS == "linux" {
+		executable, err := os.Executable()
+		if err == nil {
+			output, err := exec.Command("getcap", executable).Output()
+			if err == nil {
+				if strings.Contains(string(output), "cap_dac_override,cap_setpcap,cap_sys_admin=p") {
+					fixPermissions.Text = "Permissions OK"
+					fixPermissions.Disable()
+				}
+				serverTop.Add(fixPermissions)
+			}
+		}
+	}
+
 	serverTab := container.NewBorder(serverTop, nil, nil, nil, logs.scroll)
 	optionsTab := container.NewVBox(form, checks)
 
