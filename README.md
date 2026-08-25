@@ -45,17 +45,47 @@ Inara simulates other devices besides just a graphics tablet.
 
 ## Install
 
-### Linux
+Download latest packages from [releases](https://github.com/electronstudio/desktop_remote_mobile_companion/releases).
+(May be newer than links below.)
 
-Download a package from [releases](https://github.com/electronstudio/desktop_remote_mobile_companion/releases).  To install the deb package on Debian/Ubuntu:
+### Windows
+
+Download [zip file](https://github.com/electronstudio/desktop_remote_mobile_companion/releases/download/v0.8.10/inara-windows-x86_64-0.8.10.zip) and unzip.
+
+### Ubuntu, Debian, Mint
+
+Download the [deb package](https://github.com/electronstudio/desktop_remote_mobile_companion/releases/download/v0.8.10/inara_0.8.10-1_amd64.deb), then install:
 
     cd ~/Downloads
-    sudo apt install ./inara*.deb
+    sudo apt install ./inara_0.8.10-1_amd64.deb
 
-On Intel GPU systems the full Intel drivers are required, e.g. install them on Debian with:
+### Arch, CachyOS
+
+Install from [AUR](https://aur.archlinux.org/packages/inara), e.g.:
+
+	paru -S inara --noconfirm
+
+### Other Linux
+
+Download the [static binary tarball](https://github.com/electronstudio/desktop_remote_mobile_companion/releases/download/v0.8.10/inara-linux-x86_64-0.8.10.tar.xz) and untar.
+
+OR
+
+Run the [static binary installer](https://github.com/electronstudio/desktop_remote_mobile_companion/releases/download/v0.8.10/inara-linux-x86_64-0.8.10.installer.run). This command downloads and runs it:
+
+```bash
+curl -sSLfO https://github.com/electronstudio/desktop_remote_mobile_companion/releases/download/v0.8.10/inara-linux-x86_64-0.8.10.installer.run && 
+chmod +x inara-linux-x86_64-0.8.10.installer.run && 
+./inara-linux-x86_64-0.8.10.installer.run && 
+rm inara-linux-x86_64-0.8.10.installer.run
+```
+
+### Note
+
+On Intel GPU systems the full Intel drivers are required.  Install them with:
 
     sudo apt install intel-media-va-driver-non-free
-
+    
 If your OS firewall blocks connections by default (e.g. CachyOS) you will need to open a port, e.g.:
 
     sudo ufw allow 8080
@@ -65,7 +95,7 @@ If your OS firewall blocks connections by default (e.g. CachyOS) you will need t
 For the GUI version, run:
 
 ```bash
-./inara_gui
+inara_gui
 ```
 
 If you installed a Linux package, it will appear on your start menu.  On Windows there is no installer, you just
@@ -123,16 +153,32 @@ make
 
 If you can't see your mouse pointer, you need to disable hardware cursor:
 
-    echo "MUTTER_DEBUG_DISABLE_HW_CURSORS=1" | sudo tee /etc/environment
-    echo "KWIN_FORCE_SW_CURSOR=1" | sudo tee /etc/environment
-    echo "WLR_NO_HARDWARE_CURSORS=1" | sudo tee /etc/environment
-    sudo reboot
+```bash
+echo "MUTTER_DEBUG_DISABLE_HW_CURSORS=1" | sudo tee /etc/environment
+echo "KWIN_FORCE_SW_CURSOR=1" | sudo tee /etc/environment
+echo "WLR_NO_HARDWARE_CURSORS=1" | sudo tee /etc/environment
+sudo reboot
+```
 
 By default when the tablet tool is active it keeps the tablet 'hovering'
 which prevents use of a mouse until you switch away from the tool.
 This is required by some software such as Gnome.  But you can disable it:
 
     inara --dont-grab-mouse
+
+The Linux packages install a systemd *user* service (`/usr/lib/systemd/user/inara.service`) that runs the
+headless `inara` server.  To have the server start automatically every time you log in, enable it:
+
+    systemctl --user enable --now inara.service
+
+Check its status/output with `systemctl --user status inara` / `journalctl --user -u inara`.  Disable with:
+
+    systemctl --user disable inara
+
+Stop with:
+
+    systemctl --user stop inara
+
 
 ## Security (Linux)
 
