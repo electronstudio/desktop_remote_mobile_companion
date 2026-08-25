@@ -410,7 +410,7 @@ func main() {
 		}()
 	}
 
-	fixPermissions := widget.NewButton("Fix permissions (restart)", nil)
+	fixPermissions := widget.NewButton("Fix permissions (restart required)", nil)
 
 	fixPermissions.OnTapped = func() {
 		executable, err := os.Executable()
