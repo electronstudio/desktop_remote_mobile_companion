@@ -40,7 +40,7 @@ github.com/electronstudio/desktop_remote_mobile_companion
 
 - `cmd/inara/main.go` — the `inara` CLI binary entry point: parses command-line flags (via `go-arg`), constructs a `server.Server` with `server.New`, and runs it. Ctrl-C/SIGTERM triggers a graceful `Shutdown` (a second signal force-quits).
 - `cmd/inara_gui/main.go` — the `inara_gui` binary entry point: a Fyne GUI with a Start/Stop button that runs `server.Server` in a goroutine with default flags (no CLI parsing); stopping re-enables the config widgets so the server can be restarted without relaunching, and closing the window shuts the server down gracefully before exiting. Also a read-only scrollable log text area that mirrors everything written via the standard `log` package (any package) through a process-global `log.SetOutput(io.MultiWriter(os.Stderr, ...))` redirect; a bounded line buffer + `fyne.Do` flush goroutine keeps the widget updated thread-safely.
-- `server/server.go` — the shared server library: HTTPS server, self-signed certificate generation, static/index serving, virtual-device creation, and version injection, exposed as `server.Server` with a `New(cli)` / `Run()` / `Shutdown(ctx)` lifecycle (single-use: after `Shutdown`, construct a fresh one). `Run` blocks until the listener fails or `Shutdown` is called. `Shutdown` closes every active `signaling.Session` (tracked in a registry, because `http.Server.Shutdown` does not close hijacked WebSocket connections) so each session's defer chain cleanly stops its FFmpeg capture pipeline — tearing the process down mid-capture, e.g. via an unhandled Ctrl-C, can crash the Wayland compositor — then shuts down the HTTP server and closes the virtual input devices. The `/signal` WebSocket handler upgrades the connection and delegates to a `signaling.Session`, so `server.go` no longer contains WebRTC or device-routing logic.
+- `server/server.go` — the shared server library: HTTPS server, static/index serving, the unauthenticated `/ca.crt` (`/ca.pem`) endpoint that serves the local CA certificate for client trust-store installation, virtual-device creation, and version injection, exposed as `server.Server` with a `New(cli)` / `Run()` / `Shutdown(ctx)` lifecycle (single-use: after `Shutdown`, construct a fresh one). `Run` blocks until the listener fails or `Shutdown` is called. `Shutdown` closes every active `signaling.Session` (tracked in a registry, because `http.Server.Shutdown` does not close hijacked WebSocket connections) so each session's defer chain cleanly stops its FFmpeg capture pipeline — tearing the process down mid-capture, e.g. via an unhandled Ctrl-C, can crash the Wayland compositor — then shuts down the HTTP server and closes the virtual input devices. The `/signal` WebSocket handler upgrades the connection and delegates to a `signaling.Session`, so `server.go` no longer contains WebRTC or device-routing logic.
 - `server/platform_linux.go` — platform/capability helpers (`hasCapSysAdmin`, `onNoSuidMount`, `reExecWithSudo`, privilege dropping), moved into the `server` package.
 - `server/platform_windows.go` — Windows stubs of the platform helpers.
 - `server/device_help.go` — the uinput/CAP_SYS_ADMIN instruction strings shown to the user on permission errors.
@@ -56,6 +56,7 @@ github.com/electronstudio/desktop_remote_mobile_companion
 - `video/video_windows.go` — Windows ddagrab capture backend (Direct3D 11 Desktop Duplication via FFmpeg's lavfi input; mirrors the kmsgrab backend).
 - `server/static/index.html` — responsive touch UI with mode selector, embedded desktop `<video>` in the tablet panel, and version display.
 - `server/static/app.js` — browser WebRTC client, touch-event capture, mode switching, recv-only video transceiver + `ontrack` rendering with visibility gating.
+- `server/certs.go` — TLS certificate setup: a long-lived local root CA (`ca.crt`/`ca.key`) plus the per-start server leaf (`server.crt`/`server.key`) it signs; CA reuse, broken-state regeneration, and fingerprint logging. The CA key can mint certificates trusted by every installed client device, so it is mode 0600 and is never served over HTTP. Unit-tested in `server/certs_test.go`.
 - `server/VERSION` — embedded version string, displayed by both server and client.
 
 ## Build and run
@@ -107,16 +108,18 @@ Example:
 
 ## TLS certificate
 
-The server needs HTTPS because browser WebRTC APIs require a secure context. A self-signed certificate is generated automatically on first run and reused afterwards.
+The server needs HTTPS because browser WebRTC APIs require a secure context. Since 0.8.5 the setup is a **local root CA + per-start leaf** (mkcert-style), which lets clients install the CA once and never think about certificates again — uninstalling the warning also unlocks service workers and PWA installation on Android.
 
 - Storage location: `os.UserCacheDir()/inara/`
   - Linux: `$HOME/.cache/inara/`
   - macOS: `$HOME/Library/Caches/inara/`
   - Windows: `%LocalAppData%\inara\`
-- Files: `server.crt`, `server.key`
-- The certificate includes `localhost`, `127.0.0.1`, `::1`, and all non-loopback local interface IPs in the SAN list.
-- The SHA-256 fingerprint is printed at startup so users can verify it on first visit.
-- Delete the two files to force regeneration.
+- Files: `ca.crt` (0644, public), `ca.key` (0600, sensitive — never leaves the host over HTTP), `server.crt`, `server.key`.
+- The **CA** is self-signed with `IsCA: true` and `KeyUsageCertSign`, CN `inara Local CA (<hostname>)`, valid 10 years. It is generated on first run and reused forever after; it is only regenerated when `ca.crt`/`ca.key` are missing or unreadable, in which case every client device must re-install the certificate (a startup log line says so).
+- The **leaf** is re-signed by the CA and rewritten **on every start** (fresh keypair, SANs = `localhost`, loopbacks, current non-loopback interface IPs, validity 825 days — the iOS/macOS browser cap). Regenerating always (rather than diffing SANs) self-heals IP changes and corruption for free; clients trust the CA, so leaf rotation is invisible to them.
+- The CA SHA-256 fingerprint is printed at startup and injected into the web UI (as `{{CA_FINGERPRINT}}`), so users can compare it with what the OS shows during installation.
+- Clients install the CA from `GET /ca.crt` (or `/ca.pem`), served unauthenticated (`application/x-x509-ca-cert`, `Content-Disposition: attachment`) — it is a public key, and the first-time user needs it before they can reliably enter a passcode. The web app's log-panel shield button opens the install how-to (Android / iOS / desktop instructions). On Android: open the downloaded `.crt` or Settings → Install a certificate → CA certificate. On iOS: Settings → Profile Downloaded → Install, then Settings → General → About → Certificate Trust Settings → enable full trust (the commonly missed second step).
+- Delete `ca.crt`/`ca.key` to force CA regeneration (all clients must re-install the certificate).
 
 ## uinput permissions
 

@@ -217,7 +217,11 @@
       justify-content: space-between;
       gap: 0.5rem;
     }
-    .fullscreen-btn {
+    .log-header-btns {
+      display: flex;
+      gap: 0.4rem;
+    }
+    .cert-btn, .fullscreen-btn {
       background: transparent;
       border: 1px solid #555;
       border-radius: 4px;
@@ -226,8 +230,8 @@
       cursor: pointer;
       touch-action: manipulation;
     }
-    .fullscreen-btn:active { background: #2a2a2a; }
-    .fullscreen-btn svg {
+    .cert-btn:active, .fullscreen-btn:active { background: #2a2a2a; }
+    .cert-btn svg, .fullscreen-btn svg {
       display: block;
       width: 14px;
       height: 14px;
@@ -296,6 +300,79 @@
     }
     #auth-submit:disabled { opacity: 0.5; }
     #auth-error { color: #f66; }
+
+    /* Certificate install help, opened from the shield button in the log
+       panel headers. Like the auth overlay it must re-enable touch-action
+       and text selection, which the body disables for the touch panels. */
+    #cert-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 100;
+      background: #111;
+      overflow-y: auto;
+      touch-action: pan-y;
+      user-select: text;
+      -webkit-user-select: text;
+      display: flex;
+      align-items: flex-start;
+      justify-content: center;
+      padding: 1rem;
+    }
+    #cert-overlay[hidden] { display: none; }
+    #cert-dialog {
+      display: flex;
+      flex-direction: column;
+      gap: 0.9rem;
+      width: min(90vw, 420px);
+      text-align: left;
+      padding-bottom: 2rem;
+    }
+    #cert-dialog h2 { margin: 0; font-weight: normal; }
+    #cert-dialog p { margin: 0; color: #aaa; font-size: 0.95rem; }
+    .cert-download {
+      display: block;
+      text-align: center;
+      font-size: 1.1rem;
+      padding: 0.75rem;
+      border-radius: 6px;
+      background: #3a7;
+      color: #fff;
+      text-decoration: none;
+      touch-action: manipulation;
+    }
+    .cert-fp {
+      display: block;
+      margin-top: 0.25rem;
+      font-family: monospace;
+      font-size: 0.78rem;
+      color: #6f6;
+      word-break: break-all;
+    }
+    .cert-steps {
+      border: 1px solid #444;
+      border-radius: 6px;
+      padding: 0.6rem 0.8rem;
+    }
+    .cert-steps summary {
+      cursor: pointer;
+      color: #ddd;
+      touch-action: manipulation;
+      -webkit-user-select: none;
+      user-select: none;
+    }
+    .cert-steps ol { margin: 0.6rem 0 0 1.2rem; padding: 0; }
+    .cert-steps li { margin: 0.4rem 0; color: #aaa; font-size: 0.9rem; }
+    .cert-actions { display: flex; gap: 0.8rem; }
+    .cert-actions button {
+      flex: 1;
+      font-size: 1rem;
+      padding: 0.6rem;
+      border-radius: 6px;
+      border: 1px solid #555;
+      background: #1c1c1c;
+      color: #ddd;
+      touch-action: manipulation;
+    }
   </style>
 </head>
 <body>
@@ -315,10 +392,15 @@
       <div class="panel log-panel" data-panel="log">
         <div class="log-version">
           <span class="log-version-text">v{{VERSION}}</span>
-          <button type="button" class="fullscreen-btn" title="Toggle fullscreen" aria-label="Toggle fullscreen">
-            <svg class="icon-enter" viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>
-            <svg class="icon-exit" viewBox="0 0 24 24"><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/></svg>
-          </button>
+          <span class="log-header-btns">
+            <button type="button" class="cert-btn" title="Install certificate" aria-label="Install certificate">
+              <svg viewBox="0 0 24 24"><path d="M12 3l8 3v5c0 5-3.4 8.4-8 10-4.6-1.6-8-5-8-10V6z"/><path d="M9 12l2 2 4-4"/></svg>
+            </button>
+            <button type="button" class="fullscreen-btn" title="Toggle fullscreen" aria-label="Toggle fullscreen">
+              <svg class="icon-enter" viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>
+              <svg class="icon-exit" viewBox="0 0 24 24"><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/></svg>
+            </button>
+          </span>
         </div>
         <div class="log-content">Connecting...</div>
       </div>
@@ -345,12 +427,86 @@
       <div class="panel log-panel" data-panel="log">
         <div class="log-version">
           <span class="log-version-text">v{{VERSION}}</span>
-          <button type="button" class="fullscreen-btn" title="Toggle fullscreen" aria-label="Toggle fullscreen">
-            <svg class="icon-enter" viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>
-            <svg class="icon-exit" viewBox="0 0 24 24"><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/></svg>
-          </button>
+          <span class="log-header-btns">
+            <button type="button" class="cert-btn" title="Install certificate" aria-label="Install certificate">
+              <svg viewBox="0 0 24 24"><path d="M12 3l8 3v5c0 5-3.4 8.4-8 10-4.6-1.6-8-5-8-10V6z"/><path d="M9 12l2 2 4-4"/></svg>
+            </button>
+            <button type="button" class="fullscreen-btn" title="Toggle fullscreen" aria-label="Toggle fullscreen">
+              <svg class="icon-enter" viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>
+              <svg class="icon-exit" viewBox="0 0 24 24"><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/></svg>
+            </button>
+          </span>
         </div>
         <div class="log-content">Connecting...</div>
+      </div>
+    </div>
+  </div>
+
+  <div id="cert-overlay" hidden>
+    <div id="cert-dialog">
+      <h2>Install certificate</h2>
+      <p>Installing this server's certificate on your device once makes the
+        browser stop showing the certificate warning and lets you install
+        this app (PWA). The server is your own machine, and the certificate
+        stays trusted even when the server restarts or its IP changes.</p>
+      <a class="cert-download" href="/ca.crt" download="inara-ca.crt">Download certificate</a>
+      <p>During installation your device may show a certificate fingerprint
+        — compare it with:<br>
+        <code class="cert-fp">{{CA_FINGERPRINT}}</code>
+      </p>
+      <details class="cert-steps" data-platform="android">
+        <summary>Android</summary>
+        <ol>
+          <li>Tap <strong>Download certificate</strong> above, then open the
+            downloaded file (tap the download notification, or open it from
+            the Downloads app).</li>
+          <li>Android's certificate installer opens. If asked for the
+            certificate type, choose <strong>CA certificate</strong>, then
+            confirm with Install anyway. The warning about network
+            monitoring is standard for every user-installed CA.</li>
+          <li>If the file does not open the installer automatically, go to
+            Settings → Security &amp; privacy → More security settings →
+            Encryption &amp; credentials → Install a certificate → CA
+            certificate, and pick the downloaded file.</li>
+          <li>Fully close your browser (swipe it away in Recent Apps),
+            reopen this page, and tap “Reload page” below — the warning
+            should be gone.</li>
+          <li>You can now use the browser menu → “Install app” / “Add to
+            Home screen” to install this as an app.</li>
+        </ol>
+      </details>
+      <details class="cert-steps" data-platform="ios">
+        <summary>iPhone / iPad</summary>
+        <ol>
+          <li>Tap <strong>Download certificate</strong> in Safari and allow
+            the configuration profile download.</li>
+          <li>Open Settings — “Profile Downloaded” appears at the top of the
+            main list. Tap it → Install → enter your device PIN → Install.
+          </li>
+          <li>This step is easily missed: go to Settings → General → About
+            → <strong>Certificate Trust Settings</strong> and switch on
+            full trust for “inara Local CA”.</li>
+          <li>Fully close Safari (swipe it away from the app switcher),
+            reopen this page, and tap “Reload page” below — the warning
+            should be gone. Open the page via one of the IP addresses the
+            server prints in its log; other hostnames are not covered by
+            the certificate.</li>
+        </ol>
+      </details>
+      <details class="cert-steps" data-platform="desktop">
+        <summary>Desktop</summary>
+        <ol>
+          <li>Tap <strong>Download certificate</strong>, then import the
+            file into your OS or browser trust store (macOS: Keychain
+            Access → System → set to Always Trust; Windows: Install
+            Certificate → Trusted Root Certification Authorities; Linux:
+            system CA store or browser settings).</li>
+          <li>Restart the browser and reload this page.</li>
+        </ol>
+      </details>
+      <div class="cert-actions">
+        <button type="button" id="cert-reload">Reload page</button>
+        <button type="button" id="cert-close">Close</button>
       </div>
     </div>
   </div>

@@ -2,22 +2,13 @@ package server
 
 import (
 	"context"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
-	"crypto/sha256"
 	"crypto/tls"
-	"crypto/x509"
-	"crypto/x509/pkix"
 	"embed"
-	"encoding/hex"
-	"encoding/pem"
 	"errors"
 	"fmt"
 	"html"
 	"io/fs"
 	"log"
-	"math/big"
 	"net"
 	"net/http"
 	"os"
@@ -127,12 +118,13 @@ var (
 // (a signal handler or the GUI Stop button). A Server is single-use: after
 // Shutdown it cannot be restarted; construct a fresh one with New instead.
 type Server struct {
-	cli         CLI
-	httpServer  *http.Server
-	certDir     string
-	fingerprint string
-	pad         trackpad.Device
-	tablet      tablet.Device
+	cli           CLI
+	httpServer    *http.Server
+	certDir       string
+	caFingerprint string
+	caCertPEM     []byte
+	pad           trackpad.Device
+	tablet        tablet.Device
 
 	// sessions tracks the active signaling sessions so Shutdown can close
 	// them explicitly: http.Server.Shutdown neither closes nor waits for
@@ -184,7 +176,15 @@ func New(cli CLI) (*Server, error) {
 	certPath := filepath.Join(certDir, "server.crt")
 	keyPath := filepath.Join(certDir, "server.key")
 
-	cert, fingerprint, err := loadOrGenerateCert(certPath, keyPath)
+	// Clients install the local CA into their trust store once; the server
+	// leaf it signs is fresh on every start (new keypair, current IPs) and
+	// never needs re-installing.
+	caCert, caKey, caPEM, err := loadOrGenerateCA(certDir)
+	if err != nil {
+		return nil, fmt.Errorf("CA certificate setup failed: %w", err)
+	}
+	fingerprint := fingerprintOf(caCert)
+	cert, err := generateLeaf(caCert, caKey, certPath, keyPath)
 	if err != nil {
 		return nil, fmt.Errorf("certificate setup failed: %w", err)
 	}
@@ -232,9 +232,13 @@ func New(cli CLI) (*Server, error) {
 	if hostname, err := os.Hostname(); err == nil && hostname != "" {
 		titleStr = "Inara " + hostname
 	}
+	// The CA fingerprint is injected so the in-app certificate-install help
+	// can show the exact value the OS displays during installation, letting
+	// the user confirm they are installing this server's CA.
 	indexHTML := strings.NewReplacer(
 		"{{VERSION}}", versionStr,
 		"{{TITLE}}", html.EscapeString(titleStr),
+		"{{CA_FINGERPRINT}}", fingerprint,
 	).Replace(string(indexBytes))
 	fileServer := http.FileServer(http.FS(staticSub))
 
@@ -275,6 +279,24 @@ func New(cli CLI) (*Server, error) {
 	// It is registered unconditionally: with no passcode configured it simply
 	// reports required=false, keeping the client logic uniform.
 	mux.Handle("/auth", auth)
+	// /ca.crt serves the local CA certificate so clients can install it
+	// into their trust store (removing the self-signed-cert warning and
+	// enabling PWA install / secure-context WebRTC). It is deliberately
+	// unauthenticated even with a passcode set: it is a public key, not a
+	// secret, and the first-time user needs it before reliably entering a
+	// passcode. Only the public cert leaves the process; ca.key never does.
+	// The application/x-x509-ca-cert MIME type is what Android's
+	// Certificate Installer hooks when a downloaded .crt is opened; iOS
+	// Safari instead triggers its configuration-profile flow from the
+	// certificate content itself.
+	serveCA := func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/x-x509-ca-cert")
+		w.Header().Set("Content-Disposition", "attachment; filename=\"inara-ca.crt\"")
+		w.Header().Set("Cache-Control", "no-store")
+		w.Write(s.caCertPEM)
+	}
+	mux.HandleFunc("/ca.crt", serveCA)
+	mux.HandleFunc("/ca.pem", serveCA)
 	mux.HandleFunc("/signal", func(w http.ResponseWriter, r *http.Request) {
 		// The browser attaches the session cookie to the WebSocket handshake
 		// automatically. Gating the handshake here also gates the WebRTC data
@@ -390,7 +412,8 @@ func New(cli CLI) (*Server, error) {
 	//}
 
 	s.certDir = certDir
-	s.fingerprint = fingerprint
+	s.caFingerprint = fingerprint
+	s.caCertPEM = caPEM
 	s.httpServer = &http.Server{
 		Addr:    listenAddr,
 		Handler: mux,
@@ -406,8 +429,9 @@ func New(cli CLI) (*Server, error) {
 // returns nil, a listener failure returns the error. Call it at most once.
 func (s *Server) Run() error {
 	log.Printf("HTTPS listening on https://localhost%s", s.httpServer.Addr)
-	log.Printf(" certificate stored in %s", s.certDir)
-	log.Printf(" certificate SHA-256 fingerprint: %s", s.fingerprint)
+	log.Printf(" certificates stored in %s", s.certDir)
+	log.Printf(" CA certificate SHA-256 fingerprint: %s", s.caFingerprint)
+	log.Printf(" install the CA on client devices from /ca.crt to remove the certificate warning")
 
 	for _, ip := range LocalIPs(true) {
 		url := fmt.Sprintf("https://%s:%d", ip, s.cli.Port)
@@ -510,133 +534,6 @@ func (s *Server) removeSession(sess *signaling.Session) {
 	delete(s.sessions, sess)
 	s.sessionsMu.Unlock()
 	s.sessionsWG.Done()
-}
-
-func certDirectory() (string, error) {
-	cache, err := os.UserCacheDir()
-	if err != nil {
-		return "", err
-	}
-	dir := filepath.Join(cache, "inara")
-	if err := os.MkdirAll(dir, 0700); err != nil {
-		return "", err
-	}
-	return dir, nil
-}
-
-func loadOrGenerateCert(certFile, keyFile string) (tls.Certificate, string, error) {
-	if _, err := os.Stat(certFile); err == nil {
-		if _, err := os.Stat(keyFile); err == nil {
-			cert, err := tls.LoadX509KeyPair(certFile, keyFile)
-			if err != nil {
-				return tls.Certificate{}, "", err
-			}
-			fp, err := certFingerprint(certFile)
-			if err == nil {
-				log.Printf("certificate: loaded existing cert from %s (fingerprint %s)", certFile, fp)
-			} else {
-				log.Printf("certificate: loaded existing cert from %s (fingerprint unavailable: %v)", certFile, err)
-			}
-			return cert, fp, err
-		}
-		log.Printf("certificate: generating new self-signed cert (key file missing, cannot reuse %s)", certFile)
-	} else {
-		log.Printf("certificate: generating new self-signed cert (no existing cert found at %s)", certFile)
-	}
-
-	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return tls.Certificate{}, "", err
-	}
-
-	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
-	if err != nil {
-		return tls.Certificate{}, "", err
-	}
-
-	template := x509.Certificate{
-		SerialNumber: serial,
-		Subject: pkix.Name{
-			Organization: []string{"inara"},
-		},
-		NotBefore:             time.Now().Add(-time.Hour),
-		NotAfter:              time.Now().AddDate(1, 0, 0),
-		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
-		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-		BasicConstraintsValid: true,
-		DNSNames:              []string{"localhost"},
-		IPAddresses:           []net.IP{net.ParseIP("127.0.0.1"), net.ParseIP("::1")},
-	}
-
-	for _, ip := range LocalIPs(false) {
-		parsed := net.ParseIP(ip)
-		if parsed != nil {
-			template.IPAddresses = append(template.IPAddresses, parsed)
-		}
-	}
-
-	certDER, err := x509.CreateCertificate(rand.Reader, &template, &template, &priv.PublicKey, priv)
-	if err != nil {
-		return tls.Certificate{}, "", err
-	}
-
-	certOut, err := os.Create(certFile)
-	if err != nil {
-		return tls.Certificate{}, "", err
-	}
-
-	err = pem.Encode(certOut, &pem.Block{Type: "CERTIFICATE", Bytes: certDER})
-	if err != nil {
-		return tls.Certificate{}, "", err
-	}
-	err = certOut.Close()
-	if err != nil {
-		return tls.Certificate{}, "", err
-	}
-
-	keyOut, err := os.OpenFile(keyFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
-	if err != nil {
-		return tls.Certificate{}, "", err
-	}
-	keyDER, err := x509.MarshalECPrivateKey(priv)
-	if err != nil {
-		return tls.Certificate{}, "", err
-	}
-	err = pem.Encode(keyOut, &pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
-	if err != nil {
-		return tls.Certificate{}, "", err
-	}
-	err = keyOut.Close()
-	if err != nil {
-		return tls.Certificate{}, "", err
-	}
-
-	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
-	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
-
-	cert, err := tls.X509KeyPair(certPEM, keyPEM)
-	if err != nil {
-		return tls.Certificate{}, "", fmt.Errorf("parse generated keypair: %w", err)
-	}
-	fp, err := certFingerprint(certFile)
-	return cert, fp, err
-}
-
-func certFingerprint(path string) (string, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return "", err
-	}
-	block, _ := pem.Decode(data)
-	if block == nil {
-		return "", fmt.Errorf("failed to decode certificate PEM")
-	}
-	cert, err := x509.ParseCertificate(block.Bytes)
-	if err != nil {
-		return "", err
-	}
-	sum := sha256.Sum256(cert.Raw)
-	return hex.EncodeToString(sum[:]), nil
 }
 
 // isWaylandSession reports whether the current graphical session is Wayland.

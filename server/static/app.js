@@ -72,6 +72,39 @@
   document.addEventListener('webkitfullscreenchange', syncFullscreenButtons);
   syncFullscreenButtons();
 
+  // --- Certificate install help ------------------------------------------
+  // The shield button in each log panel header opens a help screen that
+  // lets the user download the server's local CA certificate (/ca.crt) and
+  // walks them through trusting it, which removes the certificate warning
+  // and unlocks PWA install + secure-context WebRTC. The CA fingerprint
+  // injected into the page is reformatted to the colon-separated style OS
+  // install dialogs show. The instructions list matching this device is
+  // expanded by default.
+  const certOverlay = document.getElementById('cert-overlay');
+  const certFpEl = document.querySelector('.cert-fp');
+  if (certFpEl) {
+    const raw = certFpEl.textContent.replace(/[^0-9a-f]/gi, '');
+    certFpEl.textContent = (raw.match(/.{2}/g) || []).join(':').toUpperCase();
+  }
+  {
+    const ua = navigator.userAgent;
+    let platform = 'desktop';
+    if (/Android/i.test(ua)) platform = 'android';
+    else if (/iPhone|iPad|iPod/i.test(ua)) platform = 'ios';
+    certOverlay.querySelectorAll('.cert-steps').forEach(d => {
+      d.open = d.dataset.platform === platform;
+    });
+  }
+  document.querySelectorAll('.cert-btn').forEach(btn => {
+    btn.addEventListener('click', () => { certOverlay.hidden = false; });
+  });
+  document.getElementById('cert-close').addEventListener('click', () => {
+    certOverlay.hidden = true;
+  });
+  document.getElementById('cert-reload').addEventListener('click', () => {
+    location.reload();
+  });
+
   function sendPointerSample(type, e, device, surface) {
     if (!conn.channel || conn.channel.readyState !== 'open') return;
     // Send raw panel-relative CSS-pixel coordinates plus the panel size and
