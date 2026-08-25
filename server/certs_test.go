@@ -2,7 +2,10 @@ package server
 
 import (
 	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/x509"
+	"encoding/pem"
 	"os"
 	"path/filepath"
 	"testing"
@@ -131,10 +134,10 @@ func TestLeafVerifiesAgainstCA(t *testing.T) {
 	}
 }
 
-// TestLeafFreshEachStart signs two leaves back to back: they must be
-// different certificates with different keypairs (regeneration-on-every-run
-// is the design, so IP changes self-heal on restart).
-func TestLeafFreshEachStart(t *testing.T) {
+// TestGenerateLeafFreshEachCall signs two leaves back to back: they must
+// be different certificates with different keypairs. generateLeaf itself
+// always generates; the reuse policy lives in loadOrGenerateLeaf.
+func TestGenerateLeafFreshEachCall(t *testing.T) {
 	dir := t.TempDir()
 	ca, caKey, _, err := loadOrGenerateCA(dir)
 	if err != nil {
@@ -161,4 +164,187 @@ func TestLeafFreshEachStart(t *testing.T) {
 	if pub1.Equal(&pub2) {
 		t.Fatal("regenerated leaf reuses the same keypair")
 	}
+}
+
+// leafFingerprint parses the stored server.crt and returns its fingerprint.
+func leafFingerprint(t *testing.T, certFile string) string {
+	t.Helper()
+	certPEM, err := os.ReadFile(certFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	block, _ := pem.Decode(certPEM)
+	if block == nil {
+		t.Fatal("failed to decode stored leaf PEM")
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return fingerprintOf(cert)
+}
+
+// setupLeaf generates a CA plus a leaf in a temp dir, returning the pieces
+// the leaf-reuse tests mutate between loads.
+func setupLeaf(t *testing.T) (dir string, ca *x509.Certificate, caKey *ecdsa.PrivateKey, certFile, keyFile string) {
+	t.Helper()
+	dir = t.TempDir()
+	ca, caKey, _, err := loadOrGenerateCA(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	certFile = filepath.Join(dir, "server.crt")
+	keyFile = filepath.Join(dir, "server.key")
+	if _, err := loadOrGenerateLeaf(ca, caKey, certFile, keyFile); err != nil {
+		t.Fatal(err)
+	}
+	return dir, ca, caKey, certFile, keyFile
+}
+
+// TestLeafStableAcrossRuns loads the leaf twice with an unchanged CA and
+// network: the second load must reuse the stored pair (same fingerprint).
+// Clients that skip CA installation key their browser warning exception to
+// the leaf, so a silently rotated leaf would force them to re-accept the
+// warning on every start.
+func TestLeafStableAcrossRuns(t *testing.T) {
+	_, ca, caKey, certFile, keyFile := setupLeaf(t)
+	before := leafFingerprint(t, certFile)
+	if _, err := loadOrGenerateLeaf(ca, caKey, certFile, keyFile); err != nil {
+		t.Fatal(err)
+	}
+	if after := leafFingerprint(t, certFile); before != after {
+		t.Fatal("leaf fingerprint changed across reloads: leaf was regenerated instead of reused")
+	}
+}
+
+// TestLeafMissingKeyRegenerates deletes server.key: the pair is unusable,
+// so a fresh leaf must be generated (and the files restored to coherence).
+func TestLeafMissingKeyRegenerates(t *testing.T) {
+	_, ca, caKey, certFile, keyFile := setupLeaf(t)
+	before := leafFingerprint(t, certFile)
+	if err := os.Remove(keyFile); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadOrGenerateLeaf(ca, caKey, certFile, keyFile); err != nil {
+		t.Fatal(err)
+	}
+	if after := leafFingerprint(t, certFile); before == after {
+		t.Fatal("missing leaf key did not trigger leaf regeneration")
+	}
+}
+
+// TestLeafCorruptRegenerates truncates server.crt: the parse fails, so a
+// fresh leaf must be generated.
+func TestLeafCorruptRegenerates(t *testing.T) {
+	_, ca, caKey, certFile, keyFile := setupLeaf(t)
+	before := leafFingerprint(t, certFile)
+	if err := os.WriteFile(certFile, []byte("not a PEM cert"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadOrGenerateLeaf(ca, caKey, certFile, keyFile); err != nil {
+		t.Fatal(err)
+	}
+	if after := leafFingerprint(t, certFile); before == after {
+		t.Fatal("corrupt leaf did not trigger leaf regeneration")
+	}
+}
+
+// TestLeafOrphanedByCARotationRegenerates regenerates the CA while keeping
+// the old leaf: the old leaf's signature no longer verifies against the
+// current CA, so a fresh leaf must be generated.
+func TestLeafOrphanedByCARotationRegenerates(t *testing.T) {
+	dir, _, _, certFile, keyFile := setupLeaf(t)
+	before := leafFingerprint(t, certFile)
+	if err := os.Remove(filepath.Join(dir, "ca.crt")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(dir, "ca.key")); err != nil {
+		t.Fatal(err)
+	}
+	ca2, caKey2, _, err := loadOrGenerateCA(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadOrGenerateLeaf(ca2, caKey2, certFile, keyFile); err != nil {
+		t.Fatal(err)
+	}
+	if after := leafFingerprint(t, certFile); before == after {
+		t.Fatal("CA rotation did not trigger leaf regeneration")
+	}
+}
+
+// TestLeafMissingSANRegenerates and TestLeafExpiredRegenerates regenerate
+// the stored leaf with a defect and check the reuse path rejects it.
+func TestLeafMissingSANRegenerates(t *testing.T) {
+	testDefectiveLeafRegenerates(t, func(tpl *x509.Certificate) {
+		tpl.IPAddresses = nil // no IP SANs at all: current IPs cannot match
+	})
+}
+
+func TestLeafExpiredRegenerates(t *testing.T) {
+	testDefectiveLeafRegenerates(t, func(tpl *x509.Certificate) {
+		tpl.NotBefore = time.Now().Add(-2 * leafReuseMargin)
+		tpl.NotAfter = time.Now().Add(-time.Hour)
+	})
+}
+
+// testDefectiveLeafRegenerates overwrites the stored leaf with one validly
+// signed by the current CA but carrying mutate's defect: the reuse check
+// must reject it and loadOrGenerateLeaf must generate a fresh leaf.
+func testDefectiveLeafRegenerates(t *testing.T, mutate func(*x509.Certificate)) {
+	_, ca, caKey, certFile, keyFile := setupLeaf(t)
+	before := leafFingerprint(t, certFile)
+
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	serial, err := randomSerial()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dnsNames, ips := leafSANs()
+	tpl := x509.Certificate{
+		SerialNumber:          serial,
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(-time.Hour).Add((leafValidityDays - 1) * 24 * time.Hour),
+		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		BasicConstraintsValid: true,
+		DNSNames:              dnsNames,
+		IPAddresses:           ips,
+	}
+	mutate(&tpl)
+	certDER, err := x509.CreateCertificate(rand.Reader, &tpl, ca, &priv.PublicKey, caKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyDER, err := x509.MarshalECPrivateKey(priv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
+	if err := os.WriteFile(certFile, certPEM, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(keyFile, keyPEM, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := loadOrGenerateLeaf(ca, caKey, certFile, keyFile); err != nil {
+		t.Fatal(err)
+	}
+	if before == leafFingerprint(t, certFile) || string(certPEM) == string(mustRead(t, certFile)) {
+		t.Fatal("defective leaf was reused instead of regenerated")
+	}
+}
+
+func mustRead(t *testing.T, path string) []byte {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
 }

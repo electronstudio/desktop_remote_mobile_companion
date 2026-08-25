@@ -21,12 +21,17 @@ import (
 
 // Certificate layout in certDirectory(): a long-lived local root CA
 // (ca.crt/ca.key) that clients install into their trust store once, plus a
-// short-lived server leaf (server.crt/server.key) signed by that CA. The CA
-// must stay stable across runs — it is the one artifact users install — so
-// it is only (re)generated when its files are missing or unreadable. The
-// leaf is regenerated on every start instead: fresh keypair, fresh SAN list
-// (LAN IPs can change between runs), 825-day validity. Leaf rotation is
-// invisible to clients because they trust the CA, not the leaf.
+// long-lived server leaf (server.crt/server.key) signed by that CA. Both
+// are reused across runs while they are provably still usable: the CA is
+// only (re)generated when its files are missing or unreadable (it is the
+// one artifact users install), and the leaf is reused while it is signed
+// by the current CA, comfortably in date, key-matched, and its SANs still
+// cover the current interface IPs. Keeping the leaf stable matters for
+// clients that have NOT installed the CA: browsers key the "proceed past
+// the warning" exception to the leaf, so a per-run leaf forced them to
+// re-accept the warning on every start. Regeneration stays fail-open: any
+// doubt (corrupt files, expired, missing SAN, orphaned by a CA rotation)
+// regenerates — a few extra regenerations are harmless.
 //
 // SECURITY: ca.key can now sign certificates that every installed client
 // trusts, so it is written mode 0600 and is never served over HTTP (only
@@ -39,6 +44,12 @@ import (
 // installed. NotBefore is backdated 1h for clock skew, so NotAfter is
 // placed one day inside the cap to keep the total below 825 days.
 const leafValidityDays = 825
+
+// leafReuseMargin: a stored leaf is only reused if at least this much
+// validity remains, so a reused certificate cannot silently expire
+// mid-deployment. Well below the 825-day issuance window, so a healthy
+// leaf is reused for ~795 days before being refreshed.
+const leafReuseMargin = 30 * 24 * time.Hour
 
 func certDirectory() (string, error) {
 	cache, err := os.UserCacheDir()
@@ -176,11 +187,125 @@ func parseCA(certPEM, keyPEM []byte) (*x509.Certificate, *ecdsa.PrivateKey, erro
 	return cert, key, nil
 }
 
+// leafSANs returns the SAN set a leaf must cover: localhost, the
+// loopbacks, and all current non-loopback interface IPs, matching the URLs
+// Run prints.
+func leafSANs() (dnsNames []string, ips []net.IP) {
+	dnsNames = []string{"localhost"}
+	ips = []net.IP{net.ParseIP("127.0.0.1"), net.ParseIP("::1")}
+	for _, ip := range LocalIPs(false) {
+		if parsed := net.ParseIP(ip); parsed != nil {
+			ips = append(ips, parsed)
+		}
+	}
+	return dnsNames, ips
+}
+
+// parseLeaf loads and decodes the stored leaf pair. tls.X509KeyPair
+// verifies the private key matches the certificate, so a coherent return
+// value is usable by the HTTPS server as-is.
+func parseLeaf(certPEM, keyPEM []byte) (tls.Certificate, *x509.Certificate, error) {
+	pair, err := tls.X509KeyPair(certPEM, keyPEM)
+	if err != nil {
+		return tls.Certificate{}, nil, err
+	}
+	leaf, err := x509.ParseCertificate(pair.Certificate[0])
+	if err != nil {
+		return tls.Certificate{}, nil, err
+	}
+	return pair, leaf, nil
+}
+
+// leafReuseBlocker reports why a stored leaf must not be reused, or "" if
+// it is safe to keep. Every failed check regenerates (fail-open): an
+// unnecessary regeneration only costs clients a fresh certificate, never a
+// broken server. Extra SANs in the stored cert are harmless (an interface
+// that went away); only missing ones block reuse.
+func leafReuseBlocker(leaf, caCert *x509.Certificate) string {
+	if leaf.IsCA {
+		return "stored certificate is a CA, not a server leaf"
+	}
+	hasServerAuth := false
+	for _, eku := range leaf.ExtKeyUsage {
+		if eku == x509.ExtKeyUsageServerAuth {
+			hasServerAuth = true
+		}
+	}
+	if !hasServerAuth {
+		return "missing server-authentication extended key usage"
+	}
+	// Also covers the "CA was regenerated" case: an orphaned leaf's
+	// signature no longer verifies against the current CA.
+	if err := leaf.CheckSignatureFrom(caCert); err != nil {
+		return fmt.Sprintf("not signed by the current CA: %v", err)
+	}
+	now := time.Now()
+	if now.Before(leaf.NotBefore) {
+		return "not yet valid"
+	}
+	if !now.Add(leafReuseMargin).Before(leaf.NotAfter) {
+		return fmt.Sprintf("expires %s (within the %s reuse margin)", leaf.NotAfter.Format("2006-01-02"), leafReuseMargin)
+	}
+	dnsNames, ips := leafSANs()
+	dnsSet := make(map[string]bool, len(leaf.DNSNames))
+	for _, name := range leaf.DNSNames {
+		dnsSet[name] = true
+	}
+	for _, name := range dnsNames {
+		if !dnsSet[name] {
+			return fmt.Sprintf("missing DNS SAN %q", name)
+		}
+	}
+	for _, want := range ips {
+		found := false
+		for _, have := range leaf.IPAddresses {
+			if want.Equal(have) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Sprintf("missing IP SAN %s", want)
+		}
+	}
+	return ""
+}
+
+// loadOrGenerateLeaf returns the server leaf certificate, reusing the
+// stored server.crt/server.key when they still pass leafReuseBlocker and
+// generating a fresh pair otherwise. Reuse keeps the served certificate
+// stable for clients that skip CA installation and click through the
+// browser warning — their exception is keyed to the leaf.
+func loadOrGenerateLeaf(caCert *x509.Certificate, caKey *ecdsa.PrivateKey, certFile, keyFile string) (tls.Certificate, error) {
+	if certPEM, err := os.ReadFile(certFile); err == nil {
+		if keyPEM, err := os.ReadFile(keyFile); err == nil {
+			pair, leaf, err := parseLeaf(certPEM, keyPEM)
+			if err == nil {
+				if reason := leafReuseBlocker(leaf, caCert); reason == "" {
+					log.Printf("certificate: reusing existing leaf from %s (fingerprint %s, expires %s)",
+						certFile, fingerprintOf(leaf), leaf.NotAfter.Format("2006-01-02"))
+					return pair, nil
+				} else {
+					log.Printf("certificate: stored leaf is unusable (%s); regenerating", reason)
+				}
+			} else {
+				log.Printf("certificate: stored leaf is unusable (%v); regenerating", err)
+			}
+		} else {
+			log.Printf("certificate: leaf key file missing; regenerating")
+		}
+	} else {
+		log.Printf("certificate: no leaf found at %s; generating one", certFile)
+	}
+
+	return generateLeaf(caCert, caKey, certFile, keyFile)
+}
+
 // generateLeaf signs a fresh server certificate with the CA and writes it
-// to server.crt/server.key. It runs on every start: the keypair is fresh
-// and the SAN list reflects the current interface IPs, so LAN address
-// changes (DHCP) never strand the cert. SANs: localhost/loopbacks plus all
-// non-loopback interface IPs, matching the URLs Run prints.
+// to server.crt/server.key. The keypair is fresh and the SAN list reflects
+// the current interface IPs, so LAN address changes (DHCP) never strand
+// the cert. SANs: localhost/loopbacks plus all non-loopback interface IPs,
+// matching the URLs Run prints.
 func generateLeaf(caCert *x509.Certificate, caKey *ecdsa.PrivateKey, certFile, keyFile string) (tls.Certificate, error) {
 	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -191,6 +316,7 @@ func generateLeaf(caCert *x509.Certificate, caKey *ecdsa.PrivateKey, certFile, k
 		return tls.Certificate{}, err
 	}
 
+	dnsNames, ips := leafSANs()
 	template := x509.Certificate{
 		SerialNumber: serial,
 		Subject: pkix.Name{
@@ -203,15 +329,8 @@ func generateLeaf(caCert *x509.Certificate, caKey *ecdsa.PrivateKey, certFile, k
 		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
 		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 		BasicConstraintsValid: true,
-		DNSNames:              []string{"localhost"},
-		IPAddresses:           []net.IP{net.ParseIP("127.0.0.1"), net.ParseIP("::1")},
-	}
-
-	for _, ip := range LocalIPs(false) {
-		parsed := net.ParseIP(ip)
-		if parsed != nil {
-			template.IPAddresses = append(template.IPAddresses, parsed)
-		}
+		DNSNames:              dnsNames,
+		IPAddresses:           ips,
 	}
 
 	certDER, err := x509.CreateCertificate(rand.Reader, &template, caCert, &priv.PublicKey, caKey)
@@ -226,9 +345,9 @@ func generateLeaf(caCert *x509.Certificate, caKey *ecdsa.PrivateKey, certFile, k
 	}
 	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
 
-	// The leaf files are rewritten unconditionally on every start; they
-	// exist for inspection/debugging and to mirror on disk what tls.Config
-	// serves. Only the CA is ever reused across runs.
+	// The written files exist for inspection/debugging, to mirror on disk
+	// what tls.Config serves, and so loadOrGenerateLeaf can reuse them on
+	// subsequent starts.
 	if err := os.WriteFile(certFile, certPEM, 0644); err != nil {
 		return tls.Certificate{}, err
 	}

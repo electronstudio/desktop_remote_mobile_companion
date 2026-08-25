@@ -186,14 +186,15 @@ func New(cli CLI) (*Server, error) {
 	keyPath := filepath.Join(certDir, "server.key")
 
 	// Clients install the local CA into their trust store once; the server
-	// leaf it signs is fresh on every start (new keypair, current IPs) and
-	// never needs re-installing.
+	// leaf it signs is reused across runs while still valid so clients that
+	// click through the browser warning (no CA installed) keep their
+	// exception; it is regenerated only when IPs/validity/CA change.
 	caCert, caKey, caPEM, err := loadOrGenerateCA(certDir)
 	if err != nil {
 		return nil, fmt.Errorf("CA certificate setup failed: %w", err)
 	}
 	fingerprint := fingerprintOf(caCert)
-	cert, err := generateLeaf(caCert, caKey, certPath, keyPath)
+	cert, err := loadOrGenerateLeaf(caCert, caKey, certPath, keyPath)
 	if err != nil {
 		return nil, fmt.Errorf("certificate setup failed: %w", err)
 	}
