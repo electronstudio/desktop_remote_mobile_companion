@@ -518,11 +518,63 @@
     }
   }
 
+  // --- Server version check ---------------------------------------------
+  // The client learns its own version from window.APP_VERSION (injected
+  // into index.html). If the server binary was updated while this page was
+  // open — or while a stale copy of the page survived somewhere (cache,
+  // legacy service worker, installed PWA) — /version reports a different
+  // version and we reload once to pick up the new client assets.
+  //
+  // The sessionStorage flag guards against a reload loop: if the reload
+  // cannot actually replace the stale page (e.g. a service worker still
+  // pins the old index.html), the same version mismatch reappears after
+  // the reload. Rather than loop forever we then keep the old code
+  // running and just warn; the user can still clear site data manually.
+  // A successful reload clears the flag again so a later update to a
+  // *different* version reloads normally.
+  const VERSION_RELOAD_KEY = 'inara-version-reload';
+
+  async function fetchServerVersion() {
+    try {
+      const res = await fetch('/version', { cache: 'no-store' });
+      if (!res.ok) return null;
+      const data = await res.json();
+      return data && typeof data.version === 'string' ? data.version : null;
+    } catch (err) {
+      // Server unreachable (e.g. mid-restart): not a version problem, let
+      // the reconnect loop handle the backoff.
+      return null;
+    }
+  }
+
+  // Returns true when a reload was just triggered (caller must not
+  // continue starting connections; the page is about to be replaced).
+  async function checkServerVersion() {
+    if (!window.APP_VERSION) return false;
+    const v = await fetchServerVersion();
+    if (!v || v === window.APP_VERSION) {
+      try { sessionStorage.removeItem(VERSION_RELOAD_KEY); } catch (e) { /* ignore */ }
+      return false;
+    }
+    let alreadyTried = false;
+    try { alreadyTried = sessionStorage.getItem(VERSION_RELOAD_KEY) === v; } catch (e) { /* ignore */ }
+    if (alreadyTried) {
+      log(`Server updated to v${v} but the cached page cannot be replaced — continuing with stale v${window.APP_VERSION}; clear this browser's site data for this host`, 'err');
+      return false;
+    }
+    try { sessionStorage.setItem(VERSION_RELOAD_KEY, v); } catch (e) { /* ignore */ }
+    log(`Server updated to v${v} (client is v${window.APP_VERSION}) — reloading`, 'err');
+    closeOldConnections();
+    location.reload();
+    return true;
+  }
+
   // Connect only once the session is authenticated. Also used for every
   // reconnect so that a server restart (which invalidates all cookies — the
   // session token is per-run) cleanly brings the passcode prompt back
   // instead of looping on rejected handshakes.
   async function startWhenAuthed() {
+    if (await checkServerVersion()) return; // reloading for a server update
     const status = await checkAuthStatus();
     if (status.required && !status.authenticated) {
       log('Passcode required', 'err');

@@ -307,6 +307,18 @@ func New(cli CLI) (*Server, error) {
 	}
 	mux.HandleFunc("/ca.crt", serveCA)
 	mux.HandleFunc("/ca.pem", serveCA)
+	// /version reports the running binary's embedded version so a client
+	// can detect that the server was updated while its page was open (or
+	// while a stale copy of the page survived in a cache) and reload to
+	// pick up the new assets. It is deliberately unauthenticated, like
+	// /ca.crt: the version is already displayed in the page footer to any
+	// visitor, and a stale client must be able to check before entering a
+	// passcode / behind an auth-cookie expiry.
+	mux.HandleFunc("/version", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-store")
+		fmt.Fprintf(w, `{"version":%q}`+"\n", versionStr)
+	})
 	mux.HandleFunc("/signal", func(w http.ResponseWriter, r *http.Request) {
 		// The browser attaches the session cookie to the WebSocket handshake
 		// automatically. Gating the handshake here also gates the WebRTC data
