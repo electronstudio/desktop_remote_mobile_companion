@@ -262,6 +262,23 @@ func main() {
 		}
 	}
 
+	// Video QP entry: same invalid-input handling as the FPS entry. The
+	// HintText on the form item below explains the option (Fyne 2.8 has no
+	// hover tooltips; SetTooltip arrives in Fyne 3).
+	videoQpEntry := widget.NewEntry()
+	videoQpEntry.SetText(strconv.Itoa(cli.VideoQP))
+	videoQpEntry.OnChanged = func(s string) {
+		if qp, err := strconv.Atoi(strings.TrimSpace(s)); err == nil && qp > 0 {
+			cli.VideoQP = qp
+		}
+	}
+
+	// The QP form item is built separately so its HintText (a short
+	// explanation rendered under the entry, the closest thing to a tooltip in
+	// Fyne 2.8) can be set.
+	videoQpItem := widget.NewFormItem("Video QP", videoQpEntry)
+	videoQpItem.HintText = "Encoder quality - lower is higher quality and higher latency."
+
 	intelFastCheck := widget.NewCheck("Intel GPU fast mode", func(on bool) {
 		cli.VideoIntelFast = on
 	})
@@ -280,6 +297,7 @@ func main() {
 		widget.NewFormItem("Video encoder", videoEncoderSelect),
 		widget.NewFormItem("Video card", videoCardSelect),
 		widget.NewFormItem("Video FPS", videoFpsEntry),
+		videoQpItem,
 	)
 
 	qrContainer := container.NewVBox()
@@ -307,6 +325,7 @@ func main() {
 		set(passcodeEntry)
 		set(videoEncoderSelect)
 		set(videoFpsEntry)
+		set(videoQpEntry)
 		if runtime.GOOS != "windows" {
 			set(videoSourceSelect)
 			set(videoCardSelect)
