@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
@@ -13,6 +14,18 @@ import (
 
 func main() {
 	var cli server.CLI
+
+	if err := server.LoadConfig(&cli); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+
+	p, err := arg.NewParser(arg.Config{IgnoreDefault: true}, &cli)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(2)
+	}
+	p.MustParse(os.Args[1:])
 	arg.MustParse(&cli)
 
 	srv, err := server.New(cli)
