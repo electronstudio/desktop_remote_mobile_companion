@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Inara
+GenericName=Inara
+Comment=Desktop remote mobile companion
+Icon=inara
+Exec=inara_gui
+Categories=Utility;
+StartupNotify=false

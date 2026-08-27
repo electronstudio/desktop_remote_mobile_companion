@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>uk.co.electronstudio.inara</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-only</project_license>
+  <name>Inara</name>
+  <summary>Use a phone or tablet as a multitouch trackpad and graphics tablet for a Linux PC</summary>
+  <description>
+    <p>
+      Inara turns a mobile device into a multitouch trackpad/remote input
+      device for a Linux desktop PC. It serves a single-page web app over
+      HTTPS that the phone connects to with WebRTC, streaming pointer events
+      to a virtual trackpad or graphics tablet and the live desktop back to
+      the phone.
+    </p>
+  </description>
+  <launchable type="desktop-id">inara.desktop</launchable>
+  <url type="homepage">https://github.com/electronstudio/desktop_remote_mobile_companion</url>
+  <developer id="uk.co.electronstudio">
+    <name>Electron Studio</name>
+  </developer>
+  <content_rating type="oars-1.1"/>
+  <categories>
+    <category>Utility</category>
+  </categories>
+  <releases>
+    <release version="@VERSION@" date="@DATE@"/>
+  </releases>
+</component>

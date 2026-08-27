@@ -60,7 +60,8 @@ jobs:
             libgl1 libegl1 libwayland-client0 libwayland-cursor0 \
             libwayland-egl1 libx11-6 libxcursor1 libxrandr2 libxinerama1 libxi6 \
             libxkbcommon-dev libgl1-mesa-dev libopengl-dev libxcursor-dev libxrandr-dev \
-            libxinerama-dev libxi-dev libxft-dev libxxf86vm-dev libnuma1 libnuma-dev
+            libxinerama-dev libxi-dev libxft-dev libxxf86vm-dev libnuma1 libnuma-dev \
+            desktop-file-utils
 
 
       - name: Cache FFmpeg build
@@ -128,6 +129,15 @@ jobs:
 
       - name: Build GUI (inara_gui)
         run: go build -tags migrated_fynedo -o inara_gui -ldflags "-s -w -linkmode external" ./cmd/inara_gui
+
+      - name: Build AppImage
+        run: ./scripts/make-appimage.sh inara_gui "${{ needs.get-version.outputs.version }}"
+
+      - name: Upload AppImage
+        uses: actions/upload-artifact@v7
+        with:
+          name: inara-appimage-x86_64-${{ needs.get-version.outputs.version }}
+          path: dist/inara-x86_64-${{ needs.get-version.outputs.version }}.AppImage
 
       - name: Stage artifact
         run: |
@@ -443,6 +453,8 @@ jobs:
               makeself --xz "artifacts/$name" "$outdir/$name.installer.run" "Inara installer" ./install.sh
             elif [[ "$name" == inara-deb-* ]]; then
               cp "artifacts/$name"/*.deb "$outdir/"
+            elif [[ "$name" == inara-appimage-* ]]; then
+              cp "artifacts/$name"/*.AppImage "$outdir/"
             else
               (cd artifacts && zip -r "../$outdir/$name.zip" "$name")
             fi

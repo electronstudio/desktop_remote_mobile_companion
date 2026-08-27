@@ -4,7 +4,7 @@ APPDIR := $(PREFIX)/share/applications
 ICONDIR := $(PREFIX)/share/icons/hicolor
 SYSTEMDUSERDIR := $(PREFIX)/lib/systemd/user
 
-.PHONY: all install clean distclean
+.PHONY: all install clean distclean appimage
 
 # ---- FFmpeg 8.1.2 (statically linked into the single binary) ----
 # The system FFmpeg version may be incompatible with go-astiav; we build 8.1.2
@@ -78,6 +78,12 @@ uninstall:
 	update-desktop-database $(DESTDIR)$(APPDIR) 2>/dev/null || true
 
 
+
+# Build an AppImage containing inara_gui (no bundled shared libs; the host
+# provides glibc and the X11/GL/Wayland client libraries, same as the plain
+# binary release). Output goes to dist/.
+appimage: inara_gui
+	./scripts/make-appimage.sh inara_gui $$(cat server/VERSION)
 
 clean:
 	rm -f inara_gui inara

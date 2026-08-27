@@ -1,0 +1,34 @@
+#!/bin/sh
+# AppRun — entry point of the inara AppImage.
+#
+# inara_gui captures the desktop with FFmpeg's kmsgrab backend, which needs
+# CAP_SYS_ADMIN. File capabilities cannot live inside the AppImage (caps are
+# re-evaluated at every execve, and the FUSE-mounted squashfs is nosuid
+# anyway), so on every launch we install the binary to /opt/inara and grant it
+# the capabilities — the same ones the Makefile `install` target and the .deb
+# postinst apply — via one pkexec prompt, then exec that copy.
+#
+# Note: the FUSE-mounted AppDir is only accessible to the mounting user (no
+# allow_other), so the root pkexec helper cannot read the binary out of the
+# mount. We copy it to a regular temp file as the user first, and the helper
+# installs that.
+
+
+set -u
+
+HERE=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
+SELF_BIN="$HERE/usr/bin/inara_gui"
+HELPER=/opt/inara/inara_gui
+CAPS=cap_sys_admin,cap_dac_override,cap_setpcap=p
+
+TMP=$(mktemp -t inara_gui.XXXXXX) && cp -- "$SELF_BIN" "$TMP" || TMP=
+if [ -n "$TMP" ]; then
+    pkexec sh -c 'set -e; install -Dm755 -- "$1" "$2"; setcap "$3" "$2"' \
+        sh "$TMP" "$HELPER" "$CAPS" || true
+    rm -f "$TMP"
+fi
+
+if [ -x "$HELPER" ]; then
+    exec "$HELPER" "$@"
+fi
+exec "$SELF_BIN" "$@"
