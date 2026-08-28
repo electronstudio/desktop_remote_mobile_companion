@@ -135,12 +135,12 @@ func driDevices() []string {
 }
 
 func main() {
-	// Default server configuration, taken from the go-arg `default:` struct
-	// tags on server.CLI so the GUI starts with the same configuration as
-	// `inara` with no arguments. The GUI ignores command-line flags; the
-	// widgets below edit this struct before the Start button passes it to
-	// server.Run.
-	cli := server.CLIDefaults()
+	var cli server.CLI
+
+	if err := server.LoadConfig(&cli); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
 	cli.DontRunSudo = true
 
 	// NewWithID gives the app a stable unique ID (required by the Preferences
@@ -410,6 +410,24 @@ func main() {
 		}()
 	}
 
+	// saveAndExit persists the current configuration values and exits, after
+	// shutting the server down gracefully (exiting abruptly mid-capture is
+	// exactly what we want to avoid: it can crash the Wayland compositor).
+	// Shared by the window-close handler and the permission-fix restart.
+	saveAndExit := func() {
+		if err := server.SaveConfig(&cli); err != nil {
+			log.Printf("saving config: %v", err)
+		}
+		if srv != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := srv.Shutdown(ctx); err != nil {
+				log.Printf("server shutdown: %v", err)
+			}
+		}
+		os.Exit(0)
+	}
+
 	fixPermissions := widget.NewButton("Fix permissions (restart required)", nil)
 
 	fixPermissions.OnTapped = func() {
@@ -423,14 +441,7 @@ func main() {
 			cmd := exec.Command("pkexec", "/sbin/setcap", "cap_sys_admin,cap_dac_override,cap_setpcap=p", executable)
 			err = cmd.Run()
 			if err == nil {
-				// Shut the server down gracefully before exiting (as on window close);
-				// exiting abruptly mid-capture is exactly what we want to avoid.
-				if srv != nil {
-					ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-					defer cancel()
-					srv.Shutdown(ctx)
-				}
-				os.Exit(0)
+				saveAndExit()
 			}
 		}()
 	}
@@ -477,16 +488,7 @@ func main() {
 	// Closing the window shuts the server down gracefully first: each active
 	// session's FFmpeg capture pipeline closes cleanly instead of the process
 	// dying mid-capture, which can crash the Wayland compositor.
-	w.SetOnClosed(func() {
-		if srv != nil {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			if err := srv.Shutdown(ctx); err != nil {
-				log.Printf("server shutdown: %v", err)
-			}
-		}
-		os.Exit(0)
-	})
+	w.SetOnClosed(saveAndExit)
 
 	w.ShowAndRun()
 }

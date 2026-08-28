@@ -64,6 +64,37 @@ func loadConfigFromPath(path string, cli *CLI, createIfMissing bool) error {
 	return nil
 }
 
+// SaveConfig writes cli's current values to the default YAML config file,
+// uncommented, replacing whatever is there (e.g. the commented-out defaults
+// file written by the first LoadConfig). The file is shared with the CLI
+// binary, so the GUI's saved settings also become the next inara run's
+// defaults.
+func SaveConfig(cli *CLI) error {
+	path := configPath()
+	if path == "" {
+		return errors.New("cannot determine user config directory")
+	}
+
+	out := *cli
+	// DontRunSudo is a GUI runtime tweak (the GUI must never re-exec with
+	// sudo), not a user preference: persisting it would also stop the CLI
+	// binary from gaining privileges.
+	out.DontRunSudo = false
+
+	data, err := yaml.Marshal(out)
+	if err != nil {
+		return err
+	}
+
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		return fmt.Errorf("writing config file %q: %w", path, err)
+	}
+	return nil
+}
+
 // fillDefaults populates cli with the values from the struct-tag defaults,
 // without reading environment variables or command-line arguments.
 func fillDefaults(cli *CLI) error {
