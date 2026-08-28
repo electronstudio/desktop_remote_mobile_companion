@@ -19,7 +19,7 @@ import (
 )
 
 // sourceKind identifies the capture backend. It determines whether the
-// decoder produces hardware frames (which carry a hardware frames context
+// source produces hardware frames (which carry a hardware frames context
 // the filter graph can derive a device from) or software frames (which must
 // be uploaded to a hardware encoder via a device we create ourselves).
 type sourceKind int
@@ -28,6 +28,7 @@ const (
 	sourceKmsgrab sourceKind = iota
 	sourceX11grab
 	sourceDdagrab
+	sourcePipewire
 )
 
 func (k sourceKind) String() string {
@@ -38,13 +39,16 @@ func (k sourceKind) String() string {
 		return "x11grab"
 	case sourceDdagrab:
 		return "ddagrab"
+	case sourcePipewire:
+		return "pipewire"
 	}
 	return "unknown"
 }
 
-// hardwareInput reports whether the source's decoded frames carry a hardware
-// frames context. kmsgrab produces DRM hardware frames and ddagrab produces
-// D3D11 hardware frames; x11grab produces software frames.
+// hardwareInput reports whether the source's frames carry a hardware frames
+// context. kmsgrab produces DRM hardware frames and ddagrab produces D3D11
+// hardware frames; x11grab and pipewire (xdg-desktop-portal + PipeWire, shm
+// buffers) produce software frames.
 func (k sourceKind) hardwareInput() bool {
 	return k == sourceKmsgrab || k == sourceDdagrab
 }
@@ -242,7 +246,35 @@ func newEncoder(cfg Config, kind sourceKind) (*encoder, error) {
 	return e, nil
 }
 
-// initFilterGraph builds the filter graph the first time a decoded frame is
+// frameMeta describes the raw frames a capture source feeds into the filter
+// graph. The FFmpeg input devices (kmsgrab/x11grab/ddagrab) build it from
+// their decoded frames via frameMetaFromDecode; the pipewire source builds
+// it from the negotiated PipeWire format.
+type frameMeta struct {
+	Width             int
+	Height            int
+	PixelFormat       astiav.PixelFormat
+	SampleAspectRatio astiav.Rational
+	TimeBase          astiav.Rational
+	// HardwareFramesContext is the hardware frames context the source frames
+	// carry; nil for software frames (x11grab, pipewire).
+	HardwareFramesContext *astiav.HardwareFramesContext
+}
+
+// frameMetaFromDecode builds the filter-graph input description from a
+// decoded frame produced by an FFmpeg input device (kmsgrab/x11grab/ddagrab).
+func frameMetaFromDecode(decodeCodecContext *astiav.CodecContext, decodeFrame *astiav.Frame, videoStream *astiav.Stream) frameMeta {
+	return frameMeta{
+		Width:                 decodeCodecContext.Width(),
+		Height:                decodeCodecContext.Height(),
+		PixelFormat:           decodeCodecContext.PixelFormat(),
+		SampleAspectRatio:     decodeCodecContext.SampleAspectRatio(),
+		TimeBase:              videoStream.TimeBase(),
+		HardwareFramesContext: decodeFrame.HardwareFramesContext(),
+	}
+}
+
+// initFilterGraph builds the filter graph the first time a source frame is
 // available. The graph description depends on both the source (hardware vs
 // software input frames) and the encoder (target device + required pixel
 // format).
@@ -257,7 +289,7 @@ func newEncoder(cfg Config, kind sourceKind) (*encoder, error) {
 // API manually and attaches the device between create and init, exactly like
 // FFmpeg's own fftools graph_parse(). Hardware sources (kmsgrab) and software
 // encoders (libx264) have no hwupload and keep using FilterGraph.Parse.
-func (e *encoder) initFilterGraph(decodeCodecContext *astiav.CodecContext, decodeFrame *astiav.Frame, videoStream *astiav.Stream) error {
+func (e *encoder) initFilterGraph(m frameMeta) error {
 	if e.filterGraph != nil {
 		return nil
 	}
@@ -291,14 +323,14 @@ func (e *encoder) initFilterGraph(decodeCodecContext *astiav.CodecContext, decod
 
 	params := astiav.AllocBuffersrcFilterContextParameters()
 	defer params.Free()
-	if e.source.hardwareInput() {
-		params.SetHardwareFramesContext(decodeFrame.HardwareFramesContext())
+	if m.HardwareFramesContext != nil {
+		params.SetHardwareFramesContext(m.HardwareFramesContext)
 	}
-	params.SetWidth(decodeCodecContext.Width())
-	params.SetHeight(decodeCodecContext.Height())
-	params.SetPixelFormat(decodeCodecContext.PixelFormat())
-	params.SetSampleAspectRatio(decodeCodecContext.SampleAspectRatio())
-	params.SetTimeBase(videoStream.TimeBase())
+	params.SetWidth(m.Width)
+	params.SetHeight(m.Height)
+	params.SetPixelFormat(m.PixelFormat)
+	params.SetSampleAspectRatio(m.SampleAspectRatio)
+	params.SetTimeBase(m.TimeBase)
 
 	if err := e.buffersrcContext.SetParameters(params); err != nil {
 		return fmt.Errorf("video: set buffersrc params: %w", err)
@@ -317,7 +349,7 @@ func (e *encoder) initFilterGraph(decodeCodecContext *astiav.CodecContext, decod
 	inputs.SetPadIdx(0)
 	inputs.SetNext(nil)
 
-	filterDesc := e.filterGraphDesc(decodeCodecContext.Width())
+	filterDesc := e.filterGraphDesc(m.Width)
 	if e.hwDeviceContext != nil {
 		// Software source -> hardware encoder: the graph contains hwupload,
 		// which needs the device set before its init. Parse initializes too
@@ -366,19 +398,22 @@ func (e *encoder) filterGraphDesc(srcWidth int) string {
 		}
 		return base + ",hwdownload,format=yuv420p"
 
-	case e.source == sourceX11grab && e.enc == encLibx264:
+	// x11grab and pipewire both feed software frames, so they share filter
+	// graphs: convert in software for libx264, upload to the encoder's
+	// hardware device for vaapi/nvenc.
+	case (e.source == sourceX11grab || e.source == sourcePipewire) && e.enc == encLibx264:
 		if capped {
 			return fmt.Sprintf("scale=%s,format=yuv420p", width())
 		}
 		return "format=yuv420p"
 
-	case e.source == sourceX11grab && e.enc == encVaapi:
+	case (e.source == sourceX11grab || e.source == sourcePipewire) && e.enc == encVaapi:
 		if capped {
 			return fmt.Sprintf("scale=%s,format=nv12,hwupload=derive_device=vaapi", width())
 		}
 		return "format=nv12,hwupload=derive_device=vaapi"
 
-	case e.source == sourceX11grab && e.enc == encNvenc:
+	case (e.source == sourceX11grab || e.source == sourcePipewire) && e.enc == encNvenc:
 		if capped {
 			return fmt.Sprintf("scale=%s,format=nv12,hwupload=derive_device=cuda", width())
 		}

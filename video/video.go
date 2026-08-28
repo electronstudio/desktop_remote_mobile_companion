@@ -12,7 +12,8 @@ import (
 // CaptureWidth and CaptureHeight hold the native capture resolution of the
 // currently active video stream in pixels. They are set by a backend
 // constructor (synchronously, before New returns) once the capture source is
-// open, and reset to 0 when that stream stops. They are read/written
+// open (for pipewire: once the PipeWire format is negotiated), and reset to
+// 0 when that stream stops. They are read/written
 // atomically so other modules can read them concurrently with the capture
 // goroutine. A value of 0 means no video stream is active (or its resolution
 // has not yet been detected).
@@ -36,7 +37,9 @@ var (
 // use the subset they support.
 type Config struct {
 	// Source selects the capture backend. "kmsgrab" (the default, "") uses the
-	// Linux kmsgrab DRM pipeline; "x11grab" captures the X server; "none"
+	// Linux kmsgrab DRM pipeline; "x11grab" captures the X server; "pipewire"
+	// captures via xdg-desktop-portal + PipeWire (Wayland-native, no
+	// CAP_SYS_ADMIN; the user confirms a share dialog every run); "none"
 	// disables video and is handled by the caller (New is never called with
 	// it). On Windows the source is always ddagrab regardless of this value.
 	// Unknown values are rejected by the platform newStreamer with an error.

@@ -47,7 +47,7 @@ type CLI struct {
 
 	ListenAddress string `arg:"--listen-address" default:"" help:"IP address for the HTTP server to listen on; empty listens on all interfaces (the default)"`
 
-	VideoSource    string `arg:"--video-source" default:"kmsgrab" help:"desktop video capture source: \"kmsgrab\" (DRM, default), \"x11grab\" (X server), or \"none\" to disable video; ignored on Windows, where the source is always ddagrab"`
+	VideoSource    string `arg:"--video-source" default:"kmsgrab" help:"desktop video capture source: \"kmsgrab\" (DRM, default), \"x11grab\" (X server), \"pipewire\" (xdg-desktop-portal + PipeWire, Wayland-native; asks share permission every run), or \"none\" to disable video; ignored on Windows, where the source is always ddagrab"`
 	VideoEncoder   string `arg:"--video-encoder" default:"auto" help:"video H264 encoder (choices listed below)"`
 	VideoCard      string `arg:"--video-card" default:"" help:"DRM card to capture (e.g. /dev/dri/card1); empty auto-detects; ignored on Windows (ddagrab captures the primary display)"`
 	VideoFps       int    `arg:"--video-fps" default:"30" help:"video capture frame rate"`
@@ -398,6 +398,23 @@ func New(cli CLI) (*Server, error) {
 		}
 	}
 
+	if cli.VideoSource == "pipewire" {
+		// The xdg-desktop-portal identifies D-Bus callers by inspecting
+		// /proc/<pid>/root; a binary executed with file capabilities (the
+		// setcap grant installed for kmsgrab/uinput) is kernel-marked
+		// non-dumpable, making /proc/<pid> unreadable and every portal
+		// request fail with "Unable to open /proc/<pid>/root". pipewire
+		// capture needs no capabilities at all, so drop any granted set (and
+		// restore dumpability) up front once.
+		dropped, err := dropCapsSoPortalCanIdentifyUs()
+		switch {
+		case err != nil:
+			log.Printf("warning: could not drop process capabilities for the xdg-desktop-portal: %v; if the binary has setcap grants (see `make install`/the .deb), screen capture will fail with \"Unable to open /proc/<pid>/root\"", err)
+		case dropped:
+			log.Printf("note: dropped the binary's file-capability grants for this run; they are unneeded by --video-source=pipewire but break xdg-desktop-portal's application identification")
+		}
+	}
+
 	if runtime.GOOS != "windows" && video.NvidiaGPU() && cli.VideoSource == "kmsgrab" {
 		// kmsgrab decodes DRM frames and feeds them to VAAPI via hwmap. NVIDIA
 		// systems typically have no VAAPI, so the kmsgrab pipeline usually
@@ -411,9 +428,10 @@ func New(cli CLI) (*Server, error) {
 		// x11grab talks to the X server (XWayland under a Wayland session), so
 		// it can only capture X11/XWayland content; native Wayland surfaces are
 		// invisible to it and may appear as a black screen. kmsgrab captures
-		// the DRM framebuffer directly and is the better choice on Wayland.
-		log.Printf("warning: --video-source x11grab on a Wayland session: x11grab captures the X server (XWayland), so it will likely capture only X11 windows or a black screen rather than native Wayland surfaces. Consider --video-source kmsgrab.")
-		_ = toast.Show("warning: x11grab on a Wayland session", "Use --video-source kmsgrab", false)
+		// the DRM framebuffer directly, and pipewire captures via
+		// xdg-desktop-portal; both are proper Wayland capture paths.
+		log.Printf("warning: --video-source x11grab on a Wayland session: x11grab captures the X server (XWayland), so it will likely capture only X11 windows or a black screen rather than native Wayland surfaces. Consider --video-source kmsgrab or pipewire.")
+		_ = toast.Show("warning: x11grab on a Wayland session", "Use --video-source kmsgrab or pipewire", false)
 	}
 
 	if videoEnabled {

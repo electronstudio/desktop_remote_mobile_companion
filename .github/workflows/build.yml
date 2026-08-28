@@ -57,6 +57,7 @@ jobs:
             pkg-config \
             libdrm-dev \
             libva-dev \
+            libpipewire-0.3-dev \
             libgl1 libegl1 libwayland-client0 libwayland-cursor0 \
             libwayland-egl1 libx11-6 libxcursor1 libxrandr2 libxinerama1 libxi6 \
             libxkbcommon-dev libgl1-mesa-dev libopengl-dev libxcursor-dev libxrandr-dev \

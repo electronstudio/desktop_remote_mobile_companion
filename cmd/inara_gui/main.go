@@ -194,12 +194,12 @@ func main() {
 		cli.Passcode = s
 	}
 
-	videoSourceSelect := widget.NewSelect([]string{"kmsgrab", "x11grab", "none"}, func(s string) {
+	videoSourceSelect := widget.NewSelect([]string{"kmsgrab", "x11grab", "pipewire", "none"}, func(s string) {
 		cli.VideoSource = s
 	})
 	videoSourceSelect.SetSelected(cli.VideoSource)
 	// On Windows the capture source is always ddagrab (there is no kmsgrab /
-	// x11grab), so the dropdown is disabled and forced to "none"-safe no-op
+	// x11grab / pipewire), so the dropdown is disabled and forced to "none"-safe no-op
 	// semantics: the server ignores VideoSource there entirely. Display that
 	// with a ddagrab selection so the log line and this widget agree.
 	if runtime.GOOS == "windows" {

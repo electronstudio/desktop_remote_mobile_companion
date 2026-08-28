@@ -33,7 +33,8 @@ Inara uses WebRTC connections. The underlying protocol is UDP rather than TCP wh
 have lower latency.
 
 Inara mirrors the display using ffmpeg's kmsgrab, which _may_ (or may not) work better on Wayland (although doesn't
-work at all on Nvidia systems).
+work at all on Nvidia systems).  On Wayland there's also a `--video-source pipewire` option that captures through
+xdg-desktop-portal + PipeWire (the desktop asks for screen-share permission each run) and also works on Nvidia.
 
 Inara uses hardware accelerated VAAPI/CUDA encoding by default.  (Weylus says it has this, but it doesn't appear to be
 finished.)
@@ -128,7 +129,8 @@ The tools available so far are: graphics tablet, trackpad, log output.
 
 ### Nvidia on Linux
 
-Wayland is not supported by Nvidia on Linux.  Use X11 and specify `--video-source x11grab`
+kmsgrab usually doesn't work on Nvidia (no VAAPI).  On X11 specify `--video-source x11grab`; on Wayland specify
+`--video-source pipewire` instead (uses xdg-desktop-portal + PipeWire).
 
 ## Build
 
@@ -144,7 +146,7 @@ paru inara-git
 
 ```bash
 sudo apt install libavcodec-dev libavfilter-dev libavformat-dev \
-        libavutil-dev libavdevice-dev libdrm-dev libgl1 libegl1 libwayland-client0 libwayland-cursor0 \
+        libavutil-dev libavdevice-dev libdrm-dev libpipewire-0.3-dev libgl1 libegl1 libwayland-client0 libwayland-cursor0 \
         libwayland-egl1 libx11-6 libxcursor1 libxrandr2 libxinerama1 libxi6
 make
 ```

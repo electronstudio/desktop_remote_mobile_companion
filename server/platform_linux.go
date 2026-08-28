@@ -20,6 +20,46 @@ import (
 // bitmask. CAP_SYS_ADMIN is capability number 21.
 const capSysAdminBit = 21
 
+// dropCapsSoPortalCanIdentifyUs prepares the process for xdg-desktop-portal
+// D-Bus calls. The portal must inspect /proc/<pid>/root to identify the
+// calling application; a binary executed with file capabilities (the setcap
+// grant `make install`/the .deb postinst applies for kmsgrab/uinput) is
+// marked non-dumpable by the kernel, which makes /proc/<pid> root-owned and
+// unreadable to the user-session portal, so every ScreenCast request fails:
+//
+//	Portal operation not allowed: Unable to open /proc/<pid>/root
+//
+// Restoring dumpability (PR_SET_DUMPABLE) alone is not enough to make
+// outside same-user reads work again; dropping the runtime capability sets
+// as well is required (verified empirically on a 6.x kernel: clearing all
+// capabilities in all three sets, then PR_SET_DUMPABLE=1, makes
+// /proc/<pid>/root resolvable again). None of the granted capabilities are
+// needed by the pipewire/portal path itself.
+//
+// It returns true when it actually dropped at least one capability. It is a
+// no-op when running as root: as root the portal cannot identify the
+// process anyway (and root relies on capabilities for file access).
+func dropCapsSoPortalCanIdentifyUs() (bool, error) {
+	if os.Geteuid() == 0 {
+		return false, nil
+	}
+	before := cap.GetProc()
+	// Set.String renders all-empty capability sets as "=".
+	txt := before.String()
+	hadCaps := txt != "" && txt != "="
+
+	if err := before.Clear(); err != nil {
+		return false, fmt.Errorf("clear capabilities: %w", err)
+	}
+	if err := before.SetProc(); err != nil {
+		return false, fmt.Errorf("drop capabilities: %w", err)
+	}
+	if err := unix.Prctl(unix.PR_SET_DUMPABLE, 1, 0, 0, 0); err != nil {
+		return false, fmt.Errorf("set dumpable: %w", err)
+	}
+	return hadCaps, nil
+}
+
 // hasCapSysAdmin reports whether the current process has CAP_SYS_ADMIN in its
 // effective capability set. kmsgrab needs CAP_SYS_ADMIN to acquire DRM master
 // and map the framebuffer, so without it desktop video capture fails with

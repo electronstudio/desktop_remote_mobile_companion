@@ -9,12 +9,14 @@ require (
 	github.com/deploymenttheory/go-bindings-win32 v0.3.2-0.20260814104928-034429d3bf7d
 	github.com/electronstudio/low_latency_dictation v0.6.2
 	github.com/fatih/color v1.19.0
+	github.com/godbus/dbus/v5 v5.2.2
 	github.com/gorilla/websocket v1.5.3
 	github.com/jbdemonte/virtual-device v1.2.1
 	github.com/mdp/qrterminal/v3 v3.2.1
 	github.com/piglig/go-qr v1.1.0
 	github.com/pion/webrtc/v4 v4.2.16
 	golang.org/x/sys v0.47.0
+	gopkg.in/yaml.v3 v3.0.1
 	kernel.org/pub/linux/libs/security/libcap/cap v1.2.78
 )
 
@@ -37,7 +39,6 @@ require (
 	github.com/go-ole/go-ole v1.3.0 // indirect
 	github.com/go-text/render v0.2.1 // indirect
 	github.com/go-text/typesetting v0.3.4 // indirect
-	github.com/godbus/dbus/v5 v5.2.2 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/hack-pad/go-indexeddb v0.3.2 // indirect
 	github.com/hack-pad/safejs v0.1.0 // indirect
@@ -76,7 +77,6 @@ require (
 	golang.org/x/term v0.40.0 // indirect
 	golang.org/x/text v0.34.0 // indirect
 	golang.org/x/time v0.14.0 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
 	kernel.org/pub/linux/libs/security/libcap/psx v1.2.78 // indirect
 	rsc.io/qr v0.2.0 // indirect
 )

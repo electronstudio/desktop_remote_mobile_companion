@@ -332,7 +332,7 @@ func (s *ddagrabStreamer) captureLoop() {
 				break
 			}
 
-			if err := s.enc.initFilterGraph(s.decodeCodecContext, s.decodeFrame, s.videoStream); err != nil {
+			if err := s.enc.initFilterGraph(frameMetaFromDecode(s.decodeCodecContext, s.decodeFrame, s.videoStream)); err != nil {
 				log.Printf("video: init filter graph: %v", err)
 				s.decodeFrame.Unref()
 				return

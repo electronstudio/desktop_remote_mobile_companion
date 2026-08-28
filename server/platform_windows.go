@@ -14,6 +14,12 @@ func dropSudoPrivileges() error {
 	return nil
 }
 
+// dropCapsSoPortalCanIdentifyUs is a no-op on Windows (no process
+// capabilities, no xdg-desktop-portal).
+func dropCapsSoPortalCanIdentifyUs() (bool, error) {
+	return false, nil
+}
+
 func reExecWithSudo(cli CLI) {}
 
 // InterruptSignals returns the process signals that should trigger a graceful

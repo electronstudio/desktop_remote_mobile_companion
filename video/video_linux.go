@@ -89,8 +89,10 @@ func newStreamer(cfg Config) (Streamer, error) {
 		return newKmsgrabStreamer(cfg)
 	case "x11grab":
 		return newX11grabStreamer(cfg)
+	case "pipewire":
+		return newPipewireStreamer(cfg)
 	default:
-		return nil, fmt.Errorf("video: unsupported source %q on linux (want kmsgrab or x11grab)", cfg.Source)
+		return nil, fmt.Errorf("video: unsupported source %q on linux (want kmsgrab, x11grab or pipewire)", cfg.Source)
 	}
 }
 
@@ -370,7 +372,7 @@ func (s *kmsgrabStreamer) captureLoop() {
 				break
 			}
 
-			if err := s.enc.initFilterGraph(s.decodeCodecContext, s.decodeFrame, s.videoStream); err != nil {
+			if err := s.enc.initFilterGraph(frameMetaFromDecode(s.decodeCodecContext, s.decodeFrame, s.videoStream)); err != nil {
 				log.Printf("video: init filter graph: %v", err)
 				s.decodeFrame.Unref()
 				return
