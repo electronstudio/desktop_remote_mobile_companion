@@ -1,9 +1,12 @@
 // C bridge to libpipewire for the "pipewire" video source. See
 // pipewire_linux.h for the API contract. The structure follows the PipeWire
-// video capture tutorials and the wlrobs plugin: a pw_thread_loop runs the
-// PipeWire protocol on its own thread, stream event callbacks (which run on
-// that thread) copy each delivered shared-memory buffer into a bounded
-// queue, and inara_pw_read pops frames from the queue.
+// video capture examples (and the wlrobs plugin): a pw_thread_loop runs the
+// PipeWire protocol on its own thread; stream event callbacks (which run on
+// that thread) stash dequeued buffers into a bounded queue; the consumer
+// copies and releases them, unblocking the compositor. Frame pixel data is
+// copied exactly once per frame (in inara_pw_copy_frame, on the consumer's
+// thread, e.g. straight into an AVFrame) instead of once on the PipeWire
+// thread and again on the consumer's.
 
 #include "pipewire_linux.h"
 
@@ -19,6 +22,14 @@
 #include <spa/param/video/format-utils.h>
 #include <spa/pod/builder.h>
 
+struct inara_pw_raw_frame {
+	struct pw_buffer *buf; // the dequeued PipeWire buffer, to give back
+	const uint8_t *src;	   // pixel base (datas[0].data + chunk->offset)
+	int32_t stride;		   // source row stride in bytes (chunk->stride)
+	uint32_t width, height;
+	enum inara_pw_format format;
+};
+
 struct inara_pw {
 	struct pw_thread_loop *loop;
 	struct pw_context *context;
@@ -28,28 +39,32 @@ struct inara_pw {
 
 	// Negotiated raw video format; set by the param_changed event (which,
 	// like process, runs on the thread-loop thread). Read only on that
-	// thread and (via inara_pw_negotiated_format) after open succeeded, when
+	// thread and (via the negotiated_* getters) after open succeeded, when
 	// negotiation is guaranteed to have happened; protected by qmutex for
-	// that latter cross-thread read.
+	// those cross-thread reads.
 	struct spa_video_info_raw info;
 	enum inara_pw_format fmt;
 	bool have_format;
 
-	// Bounded frame queue: the process event pushes, inara_pw_read pops.
-	// When full the oldest frame is dropped (a slow encoder should lag the
-	// capture, not stall or eat memory).
+	// Bounded frame queue: the process event pushes, inara_pw_read_raw
+	// pops. When full, the oldest queued frame is dropped (its buffer is
+	// returned to the stream immediately): a slow consumer should lag the
+	// capture rather than stall the compositor or eat memory.
 	pthread_mutex_t qmutex;
 	pthread_cond_t qcond;
-	inara_pw_frame *queue[4];
+	inara_pw_raw_frame *queue[4];
 	int qhead, qtail, qcount;
 	char *error; // strdup'd stream error; set once
 	bool stopping;
 };
 
-static void queue_push_locked(inara_pw *pw, inara_pw_frame *f)
+static void queue_push_locked(inara_pw *pw, inara_pw_raw_frame *f)
 {
 	if (pw->qcount == (int)(sizeof(pw->queue) / sizeof(pw->queue[0]))) {
-		inara_pw_frame_free(pw->queue[pw->qhead]);
+		// Full: drop the oldest frame, giving its buffer straight back.
+		inara_pw_raw_frame *old = pw->queue[pw->qhead];
+		pw_stream_queue_buffer(pw->stream, old->buf);
+		free(old);
 		pw->qhead = (pw->qhead + 1) % 4;
 		pw->qcount--;
 	}
@@ -132,7 +147,8 @@ static void on_process(void *userdata)
 		return;
 
 	pthread_mutex_lock(&pw->qmutex);
-	if (!pw->have_format || pw->fmt == INARA_PW_FORMAT_UNKNOWN) {
+	if (pw->stopping || !pw->have_format ||
+	    pw->fmt == INARA_PW_FORMAT_UNKNOWN) {
 		pthread_mutex_unlock(&pw->qmutex);
 		pw_stream_queue_buffer(pw->stream, b);
 		return;
@@ -140,7 +156,6 @@ static void on_process(void *userdata)
 	const uint32_t width = pw->info.size.width;
 	const uint32_t height = pw->info.size.height;
 	const enum inara_pw_format fmt = pw->fmt;
-	const int bpp = format_bytes_per_pixel(fmt);
 	pthread_mutex_unlock(&pw->qmutex);
 
 	struct spa_buffer *buf = b->buffer;
@@ -159,33 +174,23 @@ static void on_process(void *userdata)
 		return;
 	}
 
-	const size_t row = (size_t)width * (size_t)bpp;
-	const size_t size = row * height;
-
-	inara_pw_frame *f = calloc(1, sizeof(*f));
+	inara_pw_raw_frame *f = calloc(1, sizeof(*f));
 	if (f == NULL) {
 		pw_stream_queue_buffer(pw->stream, b);
 		return;
 	}
-	f->data = malloc(size);
-	if (f->data == NULL) {
-		free(f);
-		pw_stream_queue_buffer(pw->stream, b);
-		return;
-	}
-	const uint8_t *src = (const uint8_t *)d0->data + chunk->offset;
-	for (uint32_t y = 0; y < height; y++)
-		memcpy(f->data + (size_t)y * row, src + (size_t)y * (size_t)chunk->stride, row);
+	f->buf = b;
+	f->src = (const uint8_t *)d0->data + chunk->offset;
+	f->stride = chunk->stride;
 	f->width = width;
 	f->height = height;
 	f->format = fmt;
-	f->size = size;
 
 	pthread_mutex_lock(&pw->qmutex);
 	queue_push_locked(pw, f);
 	pthread_mutex_unlock(&pw->qmutex);
-
-	pw_stream_queue_buffer(pw->stream, b);
+	// The PipeWire buffer is NOT re-queued here: it now belongs to the
+	// consumer until inara_pw_raw_frame_release.
 }
 
 static const struct pw_stream_events stream_events = {
@@ -354,7 +359,7 @@ int inara_pw_open(int remote_fd, uint32_t node_id, uint32_t width,
 		if (pw_thread_loop_timed_wait_full(pw->loop, &deadline) < 0) {
 			pw_thread_loop_unlock(pw->loop);
 			*errmsg = strdup("timed out waiting for the pipewire stream to start");
-			goto fail_timeout;
+			goto fail;
 		}
 	}
 	pw_thread_loop_unlock(pw->loop);
@@ -362,14 +367,10 @@ int inara_pw_open(int remote_fd, uint32_t node_id, uint32_t width,
 	*out = pw;
 	return 0;
 
-fail_timeout:
-	inara_pw_close(pw);
-	return 1;
 fail:;
 	char *m = *errmsg;
-	inara_pw_close(pw);
-	*errmsg = m; // inara_pw_close must not clobber the message
-	*out = NULL;
+	inara_pw_destroy(pw);
+	*errmsg = m; // inara_pw_destroy must not clobber the message
 	return 1;
 }
 
@@ -384,7 +385,33 @@ void inara_pw_negotiated_format(const inara_pw *pw, uint32_t *width,
 	pthread_mutex_unlock(&m->qmutex);
 }
 
-int inara_pw_read(inara_pw *pw, inara_pw_frame **out, char **errmsg)
+void inara_pw_negotiated_framerate(const inara_pw *pw, uint32_t *num,
+				   uint32_t *denom)
+{
+	inara_pw *m = (inara_pw *)pw;
+	pthread_mutex_lock(&m->qmutex);
+	uint32_t n = 0, d = 0;
+	if (m->have_format && m->info.framerate.denom != 0 &&
+	    m->info.framerate.num != 0) {
+		n = m->info.framerate.num;
+		d = m->info.framerate.denom;
+	}
+	pthread_mutex_unlock(&m->qmutex);
+	*num = n;
+	*denom = d;
+}
+
+void inara_pw_raw_frame_info(const inara_pw_raw_frame *f, uint32_t *width,
+			     uint32_t *height, enum inara_pw_format *format,
+			     int32_t *stride)
+{
+	*width = f->width;
+	*height = f->height;
+	*format = f->format;
+	*stride = f->stride;
+}
+
+int inara_pw_read_raw(inara_pw *pw, inara_pw_raw_frame **out, char **errmsg)
 {
 	*out = NULL;
 	*errmsg = NULL;
@@ -392,7 +419,7 @@ int inara_pw_read(inara_pw *pw, inara_pw_frame **out, char **errmsg)
 	pthread_mutex_lock(&pw->qmutex);
 	for (;;) {
 		if (pw->qcount > 0) {
-			inara_pw_frame *f = pw->queue[pw->qhead];
+			inara_pw_raw_frame *f = pw->queue[pw->qhead];
 			pw->qhead = (pw->qhead + 1) % 4;
 			pw->qcount--;
 			pthread_mutex_unlock(&pw->qmutex);
@@ -412,18 +439,54 @@ int inara_pw_read(inara_pw *pw, inara_pw_frame **out, char **errmsg)
 	}
 }
 
-void inara_pw_frame_free(inara_pw_frame *f)
+int inara_pw_copy_frame(const inara_pw_raw_frame *f, uint8_t *dst,
+			int32_t dst_linesize)
+{
+	if (f == NULL || f->src == NULL || dst == NULL)
+		return -1;
+	const size_t row = (size_t)f->width *
+			   (size_t)format_bytes_per_pixel(f->format);
+	if (dst_linesize < (int32_t)row)
+		return -1;
+	for (uint32_t y = 0; y < f->height; y++)
+		memcpy(dst + (size_t)y * (size_t)dst_linesize,
+		       f->src + (size_t)y * (size_t)f->stride, row);
+	return 0;
+}
+
+void inara_pw_raw_frame_release(inara_pw *pw, inara_pw_raw_frame *f)
 {
 	if (f == NULL)
 		return;
-	free(f->data);
+	// Give the buffer back to the stream. After inara_pw_destroy the
+	// stream is NULL; per the two-phase teardown contract this function is
+	// always called before destroy, so the stream is live here. The lock
+	// is still taken defensively.
+	if (pw->stream != NULL && pw->loop != NULL) {
+		pw_thread_loop_lock(pw->loop);
+		if (!pw->stopping)
+			pw_stream_queue_buffer(pw->stream, f->buf);
+		pw_thread_loop_unlock(pw->loop);
+	}
 	free(f);
 }
 
-void inara_pw_close(inara_pw *pw)
+void inara_pw_request_stop(inara_pw *pw)
 {
 	if (pw == NULL)
 		return;
+	pthread_mutex_lock(&pw->qmutex);
+	pw->stopping = true;
+	pthread_cond_broadcast(&pw->qcond);
+	pthread_mutex_unlock(&pw->qmutex);
+}
+
+void inara_pw_destroy(inara_pw *pw)
+{
+	if (pw == NULL)
+		return;
+
+	inara_pw_request_stop(pw);
 
 	if (pw->loop != NULL)
 		pw_thread_loop_lock(pw->loop);
@@ -435,6 +498,7 @@ void inara_pw_close(inara_pw *pw)
 	}
 	if (pw->stream != NULL)
 		pw_stream_destroy(pw->stream);
+	pw->stream = NULL;
 	if (pw->core != NULL)
 		pw_core_disconnect(pw->core);
 	if (pw->context != NULL)
@@ -442,15 +506,14 @@ void inara_pw_close(inara_pw *pw)
 	if (pw->loop != NULL)
 		pw_thread_loop_destroy(pw->loop);
 
-	// Unblock any pending inara_pw_read, draining queued frames.
+	// Drain queued frames. Their PipeWire buffers died with the stream,
+	// so (unlike inara_pw_raw_frame_release) they are just freed.
 	pthread_mutex_lock(&pw->qmutex);
-	pw->stopping = true;
 	while (pw->qcount > 0) {
-		inara_pw_frame_free(pw->queue[pw->qhead]);
+		free(pw->queue[pw->qhead]);
 		pw->qhead = (pw->qhead + 1) % 4;
 		pw->qcount--;
 	}
-	pthread_cond_broadcast(&pw->qcond);
 	pthread_mutex_unlock(&pw->qmutex);
 
 	free(pw->error);

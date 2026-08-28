@@ -14,9 +14,14 @@
 //     remote fd. The desktop environment shows its share dialog on every
 //     run (permissions are deliberately not persisted).
 //   - pipewire_linux.c + pipewire_cgo_linux.go: a libpipewire client stream
-//     connected to the portal's remote/node, negotiating raw 32-bit RGB
-//     frames over shared memory and copying them into a bounded
-//     (drop-oldest) queue.
+//     connected to the portal's remote/node, negotiating raw 32/24-bit RGB
+//     frames over shared memory. Dequeued PipeWire buffers pass through a
+//     bounded (drop-oldest) queue as zero-copy handles; the capture loop
+//     performs the single per-frame memcpy — straight into the AVFrame that
+//     feeds the filter graph — and then returns the buffer to the stream.
+//     Negotiation reports the compositor's chosen delivery frame rate, which
+//     the streamer adopts for encoding/timestamps (frames arrive at that
+//     cadence; --video-fps only steers the negotiation request).
 //   - this file: the Streamer. Frames are software frames, exactly like
 //     x11grab, so the encoder axis is unchanged: libx264 encodes them
 //     directly, while vaapi/nvenc get them via hwupload.
@@ -101,19 +106,6 @@ func newPipewireStreamer(cfg Config) (*pipewireStreamer, error) {
 		return nil, fmt.Errorf("video: create track: %w", err)
 	}
 
-	enc, err := newEncoder(cfg, sourcePipewire)
-	if err != nil {
-		return nil, err
-	}
-
-	s := &pipewireStreamer{
-		cfg:   cfg,
-		track: track,
-		enc:   enc,
-		stop:  make(chan struct{}),
-		done:  make(chan struct{}),
-	}
-
 	log.Printf("video: opening pipewire capture pipeline (%dfps, qp %d)", cfg.FrameRate, cfg.QP)
 	log.Printf("video: pipewire: requesting screen share permission from the desktop...")
 
@@ -122,19 +114,41 @@ func newPipewireStreamer(cfg Config) (*pipewireStreamer, error) {
 	// portal is missing or the user declines.
 	portal, err := openScreenCastPortal()
 	if err != nil {
-		s.enc.free()
 		return nil, err
 	}
-	s.portal = portal
 
 	capture, err := pwOpen(portal.RemoteFD, portal.NodeID,
 		portal.CaptureWidth, portal.CaptureHeight, cfg.FrameRate)
 	if err != nil {
 		portal.Close()
-		s.enc.free()
 		return nil, err
 	}
-	s.capture = capture
+
+	// The compositor picks the delivery frame rate (frequently the monitor
+	// refresh rate regardless of what we ask) and frames are pushed at that
+	// cadence, so encode/timestamps must follow it rather than the
+	// requested --video-fps.
+	if n := capture.negotiatedFramerate(); n > 0 && n != cfg.FrameRate {
+		log.Printf("video: pipewire delivered capture runs at %d fps (negotiated); streaming at that rate instead of --video-fps=%d", n, cfg.FrameRate)
+		cfg.FrameRate = n
+	}
+
+	enc, err := newEncoder(cfg, sourcePipewire)
+	if err != nil {
+		capture.destroy()
+		portal.Close()
+		return nil, err
+	}
+
+	s := &pipewireStreamer{
+		cfg:     cfg,
+		track:   track,
+		enc:     enc,
+		portal:  portal,
+		capture: capture,
+		stop:    make(chan struct{}),
+		done:    make(chan struct{}),
+	}
 
 	w, h := capture.negotiatedSize()
 	CaptureWidth.Store(int64(w))
@@ -179,12 +193,14 @@ func (s *pipewireStreamer) Stop() {
 	log.Printf("video: stopping pipewire capture pipeline")
 	close(s.stop)
 	// The capture loop may be blocked waiting for a frame (a static desktop
-	// produces none); closing the capture unblocks it with
-	// errPipewireClosed so done always closes.
-	s.capture.close()
+	// produces none); requesting stop unblocks it with errPipewireClosed so
+	// done always closes. Destroy waits until then so no raw frame can be
+	// released into a torn-down stream.
+	s.capture.requestStop()
 	if started {
 		<-s.done
 	}
+	s.capture.destroy()
 	s.portal.Close()
 	s.enc.free()
 	CaptureWidth.Store(0)
@@ -202,12 +218,20 @@ func (s *pipewireStreamer) captureLoop() {
 	defer close(s.done)
 	defer log.Printf("video: pipewire capture goroutine exited (%d frames written)", atomic.LoadUint64(&s.framesWritten))
 
-	frameDuration := time.Duration(float64(time.Second) / float64(s.cfg.FrameRate))
+	defaultFrameDuration := time.Duration(float64(time.Second) / float64(s.cfg.FrameRate))
 	// Emit a stats line roughly every 10s.
 	statsEvery := uint64(s.cfg.FrameRate * 10)
 	if statsEvery == 0 {
 		statsEvery = 300
 	}
+
+	// Delivery is damage-driven (a static desktop delivers nothing) and the
+	// compositor's cadence need not match the configured fps: sample
+	// durations are measured from actual inter-frame arrival times so the
+	// video timeline tracks wall-clock delivery, clamped to sane values so
+	// an initial burst or a long idle gap doesn't produce pathological
+	// timestamps.
+	lastFrameAt := time.Now()
 
 	// graphW/H/PixelFormat describe the frames the filter graph was built
 	// for; a monitor mode change mid-stream renegotiates the PipeWire
@@ -222,7 +246,7 @@ func (s *pipewireStreamer) captureLoop() {
 		default:
 		}
 
-		pwf, err := s.capture.read()
+		raw, err := s.capture.readRaw()
 		if err != nil {
 			if errors.Is(err, errPipewireClosed) {
 				return
@@ -231,36 +255,49 @@ func (s *pipewireStreamer) captureLoop() {
 			return
 		}
 
-		if graphW != 0 && (pwf.width != graphW || pwf.height != graphH || pwf.pixelFormat != graphPixelFormat) {
+		if graphW != 0 && (raw.w != graphW || raw.h != graphH || raw.pf != graphPixelFormat) {
+			raw.release()
 			log.Printf("video: pipewire negotiated format changed mid-stream (%dx%d %s -> %dx%d %s); "+
 				"restarting the stream is not supported, stopping capture",
-				graphW, graphH, graphPixelFormat, pwf.width, pwf.height, pwf.pixelFormat)
+				graphW, graphH, graphPixelFormat, raw.w, raw.h, raw.pf)
 			return
 		}
 
 		frame := astiav.AllocFrame()
 		if frame == nil {
+			raw.release()
 			log.Printf("video: alloc frame failed")
 			return
 		}
-		frame.SetWidth(pwf.width)
-		frame.SetHeight(pwf.height)
-		frame.SetPixelFormat(pwf.pixelFormat)
+		frame.SetWidth(raw.w)
+		frame.SetHeight(raw.h)
+		frame.SetPixelFormat(raw.pf)
 		if err := frame.AllocBuffer(32); err != nil {
-			log.Printf("video: alloc frame buffer: %v", err)
+			raw.release()
 			frame.Free()
+			log.Printf("video: alloc frame buffer: %v", err)
 			return
 		}
-		if err := frame.Data().SetBytes(pwf.data, 1); err != nil {
-			log.Printf("video: fill frame: %v", err)
+		// One memcpy per frame: PipeWire shared buffer -> this frame.
+		if err := raw.copyRawInto(frame); err != nil {
+			raw.release()
 			frame.Free()
+			log.Printf("video: %v", err)
 			continue
+		}
+		raw.release()
+
+		now := time.Now()
+		frameDuration := now.Sub(lastFrameAt)
+		lastFrameAt = now
+		if frameDuration <= 0 || frameDuration > time.Second {
+			frameDuration = defaultFrameDuration
 		}
 
 		if err := s.enc.initFilterGraph(frameMeta{
-			Width:             pwf.width,
-			Height:            pwf.height,
-			PixelFormat:       pwf.pixelFormat,
+			Width:             raw.w,
+			Height:            raw.h,
+			PixelFormat:       raw.pf,
 			SampleAspectRatio: astiav.NewRational(1, 1),
 			TimeBase:          astiav.NewRational(1, s.cfg.FrameRate),
 		}); err != nil {
@@ -268,7 +305,7 @@ func (s *pipewireStreamer) captureLoop() {
 			frame.Free()
 			return
 		}
-		graphW, graphH, graphPixelFormat = pwf.width, pwf.height, pwf.pixelFormat
+		graphW, graphH, graphPixelFormat = raw.w, raw.h, raw.pf
 
 		if err := s.enc.buffersrcContext.AddFrame(frame, astiav.NewBuffersrcFlags(astiav.BuffersrcFlagKeepRef)); err != nil {
 			log.Printf("video: add frame to filter: %v", err)
